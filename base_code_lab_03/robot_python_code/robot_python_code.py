@@ -284,11 +284,15 @@ class CameraSensor:
                         
                         # Extract the rotation matrix to find the yaw (theta)
                         R, _ = cv2.Rodrigues(rvec)
-                        # theta is the rotation of marker's X around camera's Z
-                        theta = np.arctan2(R[1, 0], R[0, 0])
+                        # raw theta is rotation of marker's X around camera's Z
+                        theta_raw = np.arctan2(R[1, 0], R[0, 0])
+                        
+                        # Apply 180-degree offset (0 points to -x in original)
+                        # theta_ekf = wrap(theta_cam + pi)
+                        theta_aligned = (theta_raw + np.pi + np.pi) % (2 * np.pi) - np.pi
                         
                         # Return in format expected by EKF: [tx, ty, tz, rx, ry, rz, theta]
-                        return True, [tx, ty, tz, float(rvec[0][0]), float(rvec[1][0]), float(rvec[2][0]), theta]
+                        return True, [tx, ty, tz, float(rvec[0][0]), float(rvec[1][0]), float(rvec[2][0]), theta_aligned]
         
         return False, []
     
