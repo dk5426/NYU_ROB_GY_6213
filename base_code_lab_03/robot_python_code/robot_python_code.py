@@ -231,12 +231,11 @@ class CameraSensor:
 
     # Get a new pose estimate from a camera image
     def get_signal(self, last_camera_signal):
-        camera_signal = last_camera_signal
-        ret, pose_estimate = self.get_pose_estimate()
-        if ret:
-            camera_signal = pose_estimate
-        
-        return camera_signal
+        ret_estimate, camera_sensor_signal_new = self.get_pose_estimate()
+        if ret_estimate:
+            return camera_sensor_signal_new
+        else:
+            return [0.0] * 7
         
     # If there is a new image, calculate a pose estimate from the fiducial tag on the robot.
     def get_pose_estimate(self):

@@ -36,7 +36,18 @@ def send_trajectory():
     print("Starting trajectory execution with Online EKF monitoring...")
     print("Format: [Time] X: {:.3f}, Y: {:.3f}, Theta: {:.3f} | Cam: {}")
     
-    # Capture initial pose for relative display
+    # 1. Warm up: Get current encoder counts to sync EKF
+    print("Waiting for initial sensor signal...")
+    while True:
+        robot.robot_sensor_signal = robot.msg_receiver.receive_robot_sensor_signal(robot.robot_sensor_signal)
+        if robot.robot_sensor_signal.encoder_counts != 0:
+            break
+        time.sleep(0.1)
+    
+    # Sync EKF to start from current encoder position
+    robot.extended_kalman_filter.last_encoder_counts = float(robot.robot_sensor_signal.encoder_counts)
+    
+    # 2. Capture initial pose for relative display
     mu_0 = np.copy(robot.extended_kalman_filter.state_mean)
     start_time_total = time.perf_counter()
     
@@ -48,13 +59,11 @@ def send_trajectory():
             while time.perf_counter() - step_start_time < duration:
                 loop_start = time.perf_counter()
                 
-                # 1. Update control signals
-                robot.msg_sender.update_signals(speed, steering)
-                robot.msg_sender.send_control_signal()
+                # 1. Update and send control signals
+                robot.msg_sender.send_control_signal([speed, steering])
                 
                 # 2. Receive sensor data from robot
-                robot.msg_receiver.receive_robot_sensor_signal()
-                robot.robot_sensor_signal = robot.msg_receiver.robot_sensor_signal
+                robot.robot_sensor_signal = robot.msg_receiver.receive_robot_sensor_signal(robot.robot_sensor_signal)
                 
                 # 3. Get camera signal (if any)
                 robot.camera_sensor_signal = robot.camera_sensor.get_signal(robot.camera_sensor_signal)
@@ -81,15 +90,13 @@ def send_trajectory():
         # Stop the robot
         print("\n\nTrajectory complete. Stopping robot.")
         for _ in range(5):
-            robot.msg_sender.update_signals(0, 0)
-            robot.msg_sender.send_control_signal()
+            robot.msg_sender.send_control_signal([0, 0])
             time.sleep(0.1)
             
     except KeyboardInterrupt:
         print("\n\nInterrupted! Stopping robot.")
         for _ in range(5):
-            robot.msg_sender.update_signals(0, 0)
-            robot.msg_sender.send_control_signal()
+            robot.msg_sender.send_control_signal([0, 0])
             time.sleep(0.1)
     finally:
         robot.camera_sensor.close()
