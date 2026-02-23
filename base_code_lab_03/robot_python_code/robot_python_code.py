@@ -287,9 +287,8 @@ class CameraSensor:
                         # theta is the rotation of marker's X around camera's Z
                         theta = np.arctan2(R[1, 0], R[0, 0])
                         
-                        # Return in format expected by EKF: [x, y, z, rx, ry, rz]
-                        # Note: EKF usually just uses [x, y, theta], but we'll pack it
-                        return True, [tx, ty, tz, float(rvec[0]), float(rvec[1]), float(rvec[2]), theta]
+                        # Return in format expected by EKF: [tx, ty, tz, rx, ry, rz, theta]
+                        return True, [tx, ty, tz, float(rvec[0][0]), float(rvec[1][0]), float(rvec[2][0]), theta]
         
         return False, []
     
