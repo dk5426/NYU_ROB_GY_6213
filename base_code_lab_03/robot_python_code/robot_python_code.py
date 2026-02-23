@@ -198,11 +198,37 @@ class CameraSensor:
     # Constructor
     def __init__(self, camera_id):
         self.camera_id = camera_id
-        self.cap = cv2.VideoCapture(camera_id)
-        self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
-        self.parameters = aruco.DetectorParameters()
-        self.detector = aruco.ArucoDetector(self.aruco_dict, self.parameters)
+        # Use AVFOUNDATION for Mac
+        self.cap = cv2.VideoCapture(camera_id, cv2.CAP_AVFOUNDATION)
         
+        # Set resolution to 1280x720
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        
+        # Hardware Camera Controls (from cali_check.py)
+        self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+        self.cap.set(cv2.CAP_PROP_CONTRAST, 64.0)
+        self.cap.set(cv2.CAP_PROP_SHARPNESS, 7.0)
+        self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25) # Manual
+        self.cap.set(cv2.CAP_PROP_EXPOSURE, parameters.EXPOSURE_VAL)
+        
+        # Configure Aruco detector
+        self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_5X5_1000)
+        self.detector_params = aruco.DetectorParameters()
+        self.detector_params.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
+        self.detector = aruco.ArucoDetector(self.aruco_dict, self.detector_params)
+        
+        # Define 3D object points for the marker (centered at origin, in meters)
+        half_length = parameters.marker_length / 2.0
+        self.obj_points = np.array([
+            [-half_length,  half_length, 0],
+            [ half_length,  half_length, 0],
+            [ half_length, -half_length, 0],
+            [-half_length, -half_length, 0]
+        ], dtype=np.float32)
+        
+        self.prev_z = None # for temporal smoothing
+
     # Get a new pose estimate from a camera image
     def get_signal(self, last_camera_signal):
         camera_signal = last_camera_signal
@@ -218,14 +244,52 @@ class CameraSensor:
         if not ret:
             return False, []
         
+        # --- Software Filter (from aruco_test.py) ---
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        corners, ids, rejectedImgPoints = self.detector.detectMarkers(gray)
+        
+        # Software contrast & brightness
+        alpha = max(0.1, parameters.CONTRAST_VAL / 50.0)
+        gray_f = gray.astype(np.float32)
+        gray_f = gray_f * alpha + parameters.BETA_VAL
+        gray_f = np.clip(gray_f, 0, 255)
+        gray = gray_f.astype(np.uint8)
+        
+        # CLAHE
+        clahe = cv2.createCLAHE(clipLimit=parameters.CLAHE_VAL, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
+        
+        # Detect markers
+        corners, ids, rejected = self.detector.detectMarkers(gray)
+        
         if ids is not None:
-            # Estimate pose for each detected marker
             for i in range(len(ids)):
-                rvec, tvec, _ = aruco.estimatePoseSingleMarkers(corners[i], parameters.marker_length, parameters.camera_matrix, parameters.dist_coeffs)
-                pose_estimate = [tvec[0][0][0], tvec[0][0][1], tvec[0][0][2], rvec[0][0][0], rvec[0][0][1], rvec[0][0][2]]
-            return True, pose_estimate
+                if ids[i][0] == parameters.TARGET_MARKER_ID:
+                    # Estimate pose using SQPNP (Stable Depth)
+                    ret_pnp, rvec, tvec = cv2.solvePnP(
+                        self.obj_points, corners[i][0], 
+                        parameters.camera_matrix, parameters.dist_coeffs, 
+                        flags=cv2.SOLVEPNP_SQPNP
+                    )
+                    
+                    if ret_pnp:
+                        # Extract translation (in meters for EKF)
+                        tx = tvec[0][0]
+                        ty = tvec[1][0]
+                        tz = tvec[2][0]
+                        
+                        # Z temporal smoothing
+                        if self.prev_z is not None:
+                            tz = 0.75 * self.prev_z + 0.25 * tz
+                        self.prev_z = tz
+                        
+                        # Extract the rotation matrix to find the yaw (theta)
+                        R, _ = cv2.Rodrigues(rvec)
+                        # theta is the rotation of marker's X around camera's Z
+                        theta = np.arctan2(R[1, 0], R[0, 0])
+                        
+                        # Return in format expected by EKF: [x, y, z, rx, ry, rz]
+                        # Note: EKF usually just uses [x, y, theta], but we'll pack it
+                        return True, [tx, ty, tz, float(rvec[0]), float(rvec[1]), float(rvec[2]), theta]
         
         return False, []
     

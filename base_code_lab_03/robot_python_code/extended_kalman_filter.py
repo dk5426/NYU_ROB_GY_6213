@@ -25,15 +25,8 @@ import parameters
 import data_handling
 
 # --------------------------------------------------------------------------
-# Lab 2 motion model constants (copy from simulation.ipynb FancySlipBias)
+# Lab 2 motion model constants are now imported from parameters.py
 # --------------------------------------------------------------------------
-K_SE  = 2.882760254750430982e-04   # m / count
-K_SS  = 6.338605358524558586e-08   # m^2 / count  (variance of s)
-A1    = -2.389748299319578351e+01
-A2    =  8.136904761904759642e-01
-A3    = -4.658503401360606679e-03
-C_R   =  3.526364371043103914e-05  # (rad/s) / (count/s)
-SIGMA_W2_CONST = 1.601538811297278713e-03  # (rad/s)^2
 
 DTH_EPS = 1e-8
 
@@ -140,7 +133,7 @@ class ExtendedKalmanFilter:
         delta_e = float(encoder_counts) - self.last_encoder_counts
         self.last_encoder_counts = float(encoder_counts)
         e_fwd = -delta_e   # forward motion: encoder counts go negative
-        return K_SE * e_fwd, abs(e_fwd)   # (s in meters, |e_fwd| for variance)
+        return parameters.K_SE * e_fwd, abs(e_fwd)   # (s in meters, |e_fwd| for variance)
 
     def rotational_velocity_w(self, v_cmd, steering_cmd):
         """
@@ -150,8 +143,8 @@ class ExtendedKalmanFilter:
         Returns w in rad/s.
         """
         v = float(np.clip(v_cmd, 40.0, 100.0))
-        r = max(0.0, A1 * v + A2 * v**2 + A3 * v**3)  # counts/sec
-        return C_R * r * float(steering_cmd)
+        r = max(0.0, parameters.A1 * v + parameters.A2 * v**2 + parameters.A3 * v**3)  # counts/sec
+        return parameters.C_R * r * float(steering_cmd)
 
     # ------------------------------------------------------------------
     # TRANSITION FUNCTION
@@ -168,7 +161,7 @@ class ExtendedKalmanFilter:
 
         delta_e = encoder_counts - self.last_encoder_counts
         e_fwd   = -delta_e
-        s       = K_SE * e_fwd
+        s       = parameters.K_SE * e_fwd
         w       = self.rotational_velocity_w(v_cmd, steering_cmd)
         dth     = w * delta_t
 
@@ -210,12 +203,12 @@ class ExtendedKalmanFilter:
         steering_cmd = float(u_t[1])
 
         # ds/d(encoder_counts) = -K_SE  (negative because e_fwd = -delta_e)
-        ds_dec = -K_SE
+        ds_dec = -parameters.K_SE
 
         # dw/d(steering_cmd) = C_R * r(v)
         v = float(np.clip(v_cmd, 40.0, 100.0))
-        r = max(0.0, A1 * v + A2 * v**2 + A3 * v**3)
-        dw_dsc = C_R * r
+        r = max(0.0, parameters.A1 * v + parameters.A2 * v**2 + parameters.A3 * v**3)
+        dw_dsc = parameters.C_R * r
 
         # dg/d(encoder_counts): same direction as dg/ds
         dg_dec = np.array([
@@ -254,10 +247,10 @@ class ExtendedKalmanFilter:
         encoder_counts = float(u_t[0])
         delta_e = encoder_counts - self.last_encoder_counts
         e_fwd = abs(delta_e)
-        sigma_s2 = max(0.0, K_SS * e_fwd)
+        sigma_s2 = max(0.0, parameters.K_SS * e_fwd)
 
         # Variance of w integrated: sigma_w^2 * dt^2
-        sigma_theta2 = SIGMA_W2_CONST * delta_t**2
+        sigma_theta2 = parameters.SIGMA_W2_CONST * delta_t**2
 
         Sigma_u = np.diag([sigma_s2, sigma_theta2])
         G_u = self.get_G_u(x_tm1, u_t, delta_t, s)

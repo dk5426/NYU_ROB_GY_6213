@@ -264,7 +264,7 @@ def main():
         show_localization_plot()
         update_video(video_image)
         
-    ui.timer(0.1, control_loop)
+    ui.timer(parameters.DT, control_loop)
 
 # Run the gui
 ui.run(native=True)

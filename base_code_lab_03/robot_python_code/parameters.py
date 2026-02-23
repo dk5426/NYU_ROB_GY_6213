@@ -42,6 +42,15 @@ dist_coeffs = np.array([
 num_robot_sensors = 2 # encoder, steering
 num_robot_control_signals = 2 # speed, steering
 
+# Lab 2 calibrated motion model constants (FancySlipBias / Ackermann hybrid)
+K_SE  = 2.882760254750430982e-04   # m / count
+K_SS  = 6.338605358524558586e-08   # m^2 / count  (variance of s)
+A1    = -2.389748299319578351e+01
+A2    =  8.136904761904759642e-01
+A3    = -4.658503401360606679e-03
+C_R   =  3.526364371043103914e-05  # (rad/s) / (count/s)
+SIGMA_W2_CONST = 1.601538811297278713e-03  # (rad/s)^2
+
 # Logging parameters
 max_num_lines_before_write = 1
 filename_start = './data/robot_data'
@@ -54,12 +63,20 @@ extra_trial_log_time = 2000 # milliseconds
 # KF parameters
 I3 = np.array([[1, 0, 0],[0, 1, 0], [0, 0, 1]])
 covariance_plot_scale = 100
+DT = 0.05 # Timing interval for both online loops and simulation (seconds)
 
 # Camera measurement noise variances (from Step 1.5 characterization, 10 poses)
 # Units: meters^2 for x/y, rad^2 for theta
 sigma_cam_x2     = 0.01535   # ~3.9 cm std
 sigma_cam_y2     = 0.02195   # ~4.7 cm std
 sigma_cam_theta2 = 7.03e-4   # ~1.5 deg std
+
+# Online Filter / Tracking Settings
+TARGET_MARKER_ID = 2
+CONTRAST_VAL = 22
+CLAHE_VAL = 1.6
+BETA_VAL = -16
+EXPOSURE_VAL = -7
 
 # Default speed command used for rotational velocity estimate
 # Set this to the typical speed you run trials at (40..100 units)
