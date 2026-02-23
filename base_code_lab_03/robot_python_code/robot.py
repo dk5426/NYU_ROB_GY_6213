@@ -27,7 +27,7 @@ class Robot:
         self.camera_sensor = robot_python_code.CameraSensor(parameters.camera_id)
         self.data_logger = robot_python_code.DataLogger(parameters.filename_start, parameters.data_name_list)
         self.robot_sensor_signal = robot_python_code.RobotSensorSignal([0, 0, 0])
-        self.camera_sensor_signal = [0,0,0,0,0,0]
+        self.camera_sensor_signal = [0, 0, 0, 0, 0, 0, 0] # [tx, ty, tz, rx, ry, rz, theta]
         self.extended_kalman_filter = extended_kalman_filter.ExtendedKalmanFilter(x_0 = [0,0,0], Sigma_0 = parameters.I3 * 10e12, encoder_counts_0 = 0)
         
     # Create udp senders and receiver instances with the udp communication
@@ -44,7 +44,16 @@ class Robot:
 
     def update_state_estimate(self):
         u_t = np.array([self.robot_sensor_signal.encoder_counts, self.robot_sensor_signal.steering]) # robot_sensor_signal
-        z_t = np.array([self.camera_sensor_signal[0],self.camera_sensor_signal[1],self.camera_sensor_signal[6]]) # camera_sensor_signal (index 6 is theta)
+        
+        # Safety check: ensure we have the expected number of elements
+        if len(self.camera_sensor_signal) >= 7:
+            z_t = np.array([self.camera_sensor_signal[0], self.camera_sensor_signal[1], self.camera_sensor_signal[6]])
+        else:
+            # Fallback for old 6-element format or empty signal
+            # If length is 6, yaw was at index 5. If smaller, use 0.
+            yaw = self.camera_sensor_signal[5] if len(self.camera_sensor_signal) == 6 else 0.0
+            z_t = np.array([self.camera_sensor_signal[0], self.camera_sensor_signal[1], yaw])
+            
         delta_t = parameters.DT
         self.extended_kalman_filter.update(u_t, z_t, delta_t)
 
