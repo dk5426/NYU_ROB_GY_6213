@@ -253,14 +253,19 @@ class CameraSensor:
         gray_f = np.clip(gray_f, 0, 255)
         gray = gray_f.astype(np.uint8)
         
-        # CLAHE
-        clahe = cv2.createCLAHE(clipLimit=parameters.CLAHE_VAL, tileGridSize=(8, 8))
+        # CLAHE (slightly relaxed for better sensitivity)
+        clahe = cv2.createCLAHE(clipLimit=parameters.CLAHE_VAL * 1.5, tileGridSize=(8, 8))
         gray = clahe.apply(gray)
         
         # Detect markers
         corners, ids, rejected = self.detector.detectMarkers(gray)
         
         if ids is not None:
+            # DEBUG: Print detected IDs to terminal if target is not found
+            id_list = [i[0] for i in ids]
+            if parameters.TARGET_MARKER_ID not in id_list:
+                 print(f"Markers detected: {id_list} (Target {parameters.TARGET_MARKER_ID} MISSING)")
+            
             for i in range(len(ids)):
                 if ids[i][0] == parameters.TARGET_MARKER_ID:
                     # Estimate pose using SQPNP (Stable Depth)

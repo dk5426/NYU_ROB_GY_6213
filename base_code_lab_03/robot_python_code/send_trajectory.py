@@ -86,6 +86,10 @@ def send_trajectory():
                 sleep_time = parameters.DT - loop_duration
                 if sleep_time > 0:
                     time.sleep(sleep_time)
+                else:
+                    # Optional: Print warning if loop is too slow
+                    # print(f"WARNING: Loop lag! ({loop_duration:.3f}s > {parameters.DT}s)")
+                    pass
 
         # Stop the robot
         print("\n\nTrajectory complete. Stopping robot.")

@@ -159,9 +159,7 @@ class ExtendedKalmanFilter:
         v_cmd          = parameters.default_speed_cmd   # need speed; use stored
         steering_cmd   = float(u_t[1])
 
-        delta_e = encoder_counts - self.last_encoder_counts
-        e_fwd   = -delta_e
-        s       = parameters.K_SE * e_fwd
+        s, e_fwd = self.distance_travelled_s(encoder_counts)
         w       = self.rotational_velocity_w(v_cmd, steering_cmd)
         dth     = w * delta_t
 
