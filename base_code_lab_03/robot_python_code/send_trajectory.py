@@ -37,7 +37,7 @@ def send_trajectory():
     print("Format: [Time] X: {:.3f}, Y: {:.3f}, Theta: {:.3f} | Cam: {}")
     
     # Capture initial pose for relative display
-    mu_0 = np.copy(robot.extended_kalman_filter.mu)
+    mu_0 = np.copy(robot.extended_kalman_filter.state_mean)
     start_time_total = time.perf_counter()
     
     try:
@@ -63,7 +63,7 @@ def send_trajectory():
                 robot.update_state_estimate()
                 
                 # 5. Print current RELATIVE pose
-                mu = robot.extended_kalman_filter.mu
+                mu = robot.extended_kalman_filter.state_mean
                 mu_rel = mu - mu_0
                 # Wrap relative theta to [-pi, pi]
                 mu_rel[2] = (mu_rel[2] + np.pi) % (2 * np.pi) - np.pi
