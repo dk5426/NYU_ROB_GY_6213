@@ -34,3 +34,13 @@ extra_trial_log_time = 2000 # milliseconds
 # KF parameters
 I3 = np.array([[1, 0, 0],[0, 1, 0], [0, 0, 1]])
 covariance_plot_scale = 100
+
+# Camera measurement noise variances (from Step 1.5 characterization, 10 poses)
+# Units: meters^2 for x/y, rad^2 for theta
+sigma_cam_x2     = 0.01535   # ~3.9 cm std
+sigma_cam_y2     = 0.02195   # ~4.7 cm std
+sigma_cam_theta2 = 7.03e-4   # ~1.5 deg std
+
+# Default speed command used for rotational velocity estimate
+# Set this to the typical speed you run trials at (40..100 units)
+default_speed_cmd = 68.0
