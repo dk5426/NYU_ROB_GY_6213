@@ -36,19 +36,34 @@ def send_trajectory():
     print("Starting trajectory execution with Online EKF monitoring...")
     print("Format: [Time] X: {:.3f}, Y: {:.3f}, Theta: {:.3f} | Cam: {}")
     
-    # 1. Warm up: Get current encoder counts to sync EKF
-    print("Waiting for initial sensor signal...")
+    # 1. Wait for a valid camera detection to set the initial pose
+    print("Waiting for initial camera detection...")
     while True:
-        robot.robot_sensor_signal = robot.msg_receiver.receive_robot_sensor_signal(robot.robot_sensor_signal)
-        if robot.robot_sensor_signal.encoder_counts != 0:
+        # Flush buffer
+        for _ in range(5):
+            robot.camera_sensor_signal = robot.camera_sensor.get_signal(robot.camera_sensor_signal)
+            
+        if len(robot.camera_sensor_signal) >= 7 and any(robot.camera_sensor_signal[:3]):
             break
         time.sleep(0.1)
+        
+    init_cam_x = robot.camera_sensor_signal[0]
+    init_cam_y = robot.camera_sensor_signal[1]
+    init_cam_theta = robot.camera_sensor_signal[6]
     
-    # Sync EKF to start from current encoder position
+    print(f"\nINITIAL CAMERA POSE -> X: {init_cam_x:.3f}, Y: {init_cam_y:.3f}, Theta: {init_cam_theta:.3f} rad\n")
+    
+    # Set the EKF state to this initial camera pose
+    robot.extended_kalman_filter.state_mean = np.array([init_cam_x, init_cam_y, init_cam_theta])
+    robot.extended_kalman_filter.predicted_state_mean = np.array([init_cam_x, init_cam_y, init_cam_theta])
+    
+    print("Waking up robot to sync encoders...")
+    for _ in range(5):
+        robot.msg_sender.send_control_signal([0, 0])
+        robot.robot_sensor_signal = robot.msg_receiver.receive_robot_sensor_signal(robot.robot_sensor_signal)
+        time.sleep(0.05)
+        
     robot.extended_kalman_filter.last_encoder_counts = float(robot.robot_sensor_signal.encoder_counts)
-    
-    # 2. Capture initial pose for relative display
-    mu_0 = np.copy(robot.extended_kalman_filter.state_mean)
     start_time_total = time.perf_counter()
     
     try:
@@ -71,15 +86,12 @@ def send_trajectory():
                 # 4. Update EKF state estimate
                 robot.update_state_estimate()
                 
-                # 5. Print current RELATIVE pose
+                # 5. Print current ABSOLUTE pose
                 mu = robot.extended_kalman_filter.state_mean
-                mu_rel = mu - mu_0
-                # Wrap relative theta to [-pi, pi]
-                mu_rel[2] = (mu_rel[2] + np.pi) % (2 * np.pi) - np.pi
                 
                 cam_seen = "YES" if (len(robot.camera_sensor_signal) >= 7 and any(robot.camera_sensor_signal[:3])) else "NO"
                 elapsed = time.perf_counter() - start_time_total
-                print(f"[{elapsed:6.2f}s] X: {mu_rel[0]:6.3f}, Y: {mu_rel[1]:6.3f}, Th: {mu_rel[2]:6.3f} | Cam: {cam_seen}", end='\r')
+                print(f"[{elapsed:6.2f}s] X: {mu[0]:6.3f}, Y: {mu[1]:6.3f}, Th: {mu[2]:6.3f} | Cam: {cam_seen}", end='\r')
                 
                 # 6. Maintain loop rate (DT = 0.05s)
                 loop_duration = time.perf_counter() - loop_start
@@ -96,6 +108,20 @@ def send_trajectory():
         for _ in range(5):
             robot.msg_sender.send_control_signal([0, 0])
             time.sleep(0.1)
+            
+        final_x = robot.extended_kalman_filter.state_mean[0]
+        final_y = robot.extended_kalman_filter.state_mean[1]
+        final_theta = robot.extended_kalman_filter.state_mean[2]
+        
+        diff_x = final_x - init_cam_x
+        diff_y = final_y - init_cam_y
+        diff_theta = final_theta - init_cam_theta
+        diff_theta = (diff_theta + np.pi) % (2 * np.pi) - np.pi
+        
+        print("\n=== FINAL RESULTS ===")
+        print(f"Initial Camera -> X: {init_cam_x:6.3f}, Y: {init_cam_y:6.3f}, Theta: {init_cam_theta:6.3f} rad")
+        print(f"Final EKF State-> X: {final_x:6.3f}, Y: {final_y:6.3f}, Theta: {final_theta:6.3f} rad")
+        print(f"Difference     -> dX: {diff_x:6.3f}, dY: {diff_y:6.3f}, dTheta: {diff_theta:6.3f} rad\n")
             
     except KeyboardInterrupt:
         print("\n\nInterrupted! Stopping robot.")
