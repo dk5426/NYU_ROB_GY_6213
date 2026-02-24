@@ -78,6 +78,3 @@ CLAHE_VAL = 1.6
 BETA_VAL = -16
 EXPOSURE_VAL = -7
 
-# Default speed command used for rotational velocity estimate
-# Set this to the typical speed you run trials at (40..100 units)
-default_speed_cmd = 68.0
