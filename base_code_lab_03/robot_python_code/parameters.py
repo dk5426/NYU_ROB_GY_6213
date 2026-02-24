@@ -48,7 +48,7 @@ K_SS  = 6.338605358524558586e-08   # m^2 / count  (variance of s)
 A1    = -2.389748299319578351e+01
 A2    =  8.136904761904759642e-01
 A3    = -4.658503401360606679e-03
-C_R   = -3.526364371043103914e-05  # (rad/s) / (count/s) -> Flipped for Right=Positive Y
+C_R   =  3.526364371043103914e-05  # (rad/s) / (count/s)
 SIGMA_W2_CONST = 1.601538811297278713e-03  # (rad/s)^2
 
 # Logging parameters
@@ -78,6 +78,3 @@ CLAHE_VAL = 1.6
 BETA_VAL = -16
 EXPOSURE_VAL = -7
 
-# Default speed command used for rotational velocity estimate
-# Set this to the typical speed you run trials at (40..100 units)
-default_speed_cmd = 68.0
