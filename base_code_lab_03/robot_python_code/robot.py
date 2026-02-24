@@ -47,19 +47,18 @@ class Robot:
         
         # Safety check: ensure we have the expected number of elements
         if len(self.camera_sensor_signal) >= 7:
-            # Camera raw -> EKF mapping
-            # EKF X (Forward)  = Camera Z (Depth)    -> index 2
-            # EKF Y (Sideways) = Camera X (Sideways) -> index 0
-            z_t = np.array([self.camera_sensor_signal[2], self.camera_sensor_signal[0], self.camera_sensor_signal[6]])
+            # Camera raw -> EKF mapping (User specifically requested exact X/Y match from aruco_test)
+            # EKF X = Camera X (Sideways tvec[0]) -> index 0
+            # EKF Y = Camera Y (Vertical tvec[1]) -> index 1
+            z_t = np.array([self.camera_sensor_signal[0], self.camera_sensor_signal[1], self.camera_sensor_signal[6]])
         else:
             # Fallback for old 6-element format or empty signal
-            # If length is 6, yaw was at index 5. If smaller, use 0.
             yaw = self.camera_sensor_signal[5] if len(self.camera_sensor_signal) == 6 else 0.0
             
-            if len(self.camera_sensor_signal) >= 3:
-                 z_t = np.array([self.camera_sensor_signal[2], self.camera_sensor_signal[0], yaw])
-            else:
+            if len(self.camera_sensor_signal) >= 2:
                  z_t = np.array([self.camera_sensor_signal[0], self.camera_sensor_signal[1], yaw])
+            else:
+                 z_t = np.array([0.0, 0.0, yaw])
             
         delta_t = parameters.DT
         self.extended_kalman_filter.update(u_t, z_t, delta_t)
