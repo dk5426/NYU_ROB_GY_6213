@@ -65,11 +65,30 @@ I3 = np.array([[1, 0, 0],[0, 1, 0], [0, 0, 1]])
 covariance_plot_scale = 100
 DT = 0.05 # Timing interval for both online loops and simulation (seconds)
 
-# Camera measurement noise variances (from Step 1.5 characterization, 10 poses)
+# Camera-to-world linear mapping coefficients
+# Derived from 7-pose ground-truth calibration (least-squares fit):
+#   x_act [cm] = CAM_X_SCALE * cam_x [cm] + CAM_X_OFFSET [cm]
+#   y_act [cm] = CAM_Y_SCALE * cam_y [cm] + CAM_Y_OFFSET [cm]
+# In code: applied in meters (tvec units), offsets in meters.
+# Calibration data:
+#   cam_x  cam_y  cam_z   cam_th  x_act  y_act
+#   -0.3   0.1   138.68  -0.2     0      0
+#    69.6  -3.8  105.2   -7.5    80      0
+#    -0.4 -85.3  162.73  -0.3     0    -90
+#   -71.7  -0.1  112.32   8.2   -80      0
+#     0.6 -41.3  155.34  -2.1     0    -45
+#   -60.5 -51.4  140.55   4.9   -60    -64
+#    60.8 -51.3  134.15  -1.9    63    -58
+CAM_X_SCALE  = 1.082   # [dimensionless]
+CAM_X_OFFSET = 0.00722 # [metres]  (= 0.722 cm)
+CAM_Y_SCALE  = 1.113   # [dimensionless]
+CAM_Y_OFFSET = 0.00330 # [metres]  (= 0.330 cm)
+
+# Camera measurement noise variances (from mapping residuals, 7 poses)
 # Units: meters^2 for x/y, rad^2 for theta
-sigma_cam_x2     = 0.01535   # ~3.9 cm std
-sigma_cam_y2     = 0.02195   # ~4.7 cm std
-sigma_cam_theta2 = 7.03e-4   # ~1.5 deg std
+sigma_cam_x2     = 8.92e-4  # ~3.0 cm std  (was 0.01535)
+sigma_cam_y2     = 1.28e-3  # ~3.6 cm std  (was 0.02195)
+sigma_cam_theta2 = 7.03e-3  # ~5.2 deg std (unchanged)
 
 # Online Filter / Tracking Settings
 TARGET_MARKER_ID = 2

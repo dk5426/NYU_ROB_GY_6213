@@ -277,9 +277,14 @@ class CameraSensor:
                     
                     if ret_pnp:
                         # Extract translation (in meters for EKF)
-                        tx = tvec[0][0]
-                        ty = tvec[1][0]
+                        tx_raw = tvec[0][0]
+                        ty_raw = tvec[1][0]
                         tz = tvec[2][0]
+                        
+                        # Apply calibrated camera-to-world mapping
+                        # Derived from 7-pose least-squares fit (see parameters.py)
+                        tx = parameters.CAM_X_SCALE * tx_raw + parameters.CAM_X_OFFSET
+                        ty = parameters.CAM_Y_SCALE * ty_raw + parameters.CAM_Y_OFFSET
                         
                         # Z temporal smoothing
                         if self.prev_z is not None:
@@ -293,7 +298,7 @@ class CameraSensor:
                         
                         # Apply 180-degree offset (0 points to -x in original)
                         # theta_ekf = wrap(theta_cam + pi)
-                        theta_aligned = ((theta_raw + np.pi + np.pi) % (2 * np.pi) - np.pi)
+                        theta_aligned = -(theta_raw  - np.pi)
                         
                         # Return in format expected by EKF: [tx, ty, tz, rx, ry, rz, theta]
                         return True, [tx, ty, tz, float(rvec[0][0]), float(rvec[1][0]), float(rvec[2][0]), theta_aligned]
