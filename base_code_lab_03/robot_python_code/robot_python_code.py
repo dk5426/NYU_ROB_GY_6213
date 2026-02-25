@@ -298,7 +298,10 @@ class CameraSensor:
                         
                         # Apply 180-degree offset (0 points to -x in original)
                         # theta_ekf = wrap(theta_cam + pi)
-                        theta_aligned = -(theta_raw  - np.pi)
+                        theta_aligned = (theta_raw  - np.pi)
+                        
+                        # Wrap to [-pi, pi] to prevent values near 2pi
+                        theta_aligned = (theta_aligned + np.pi) % (2.0 * np.pi) - np.pi
                         
                         # Return in format expected by EKF: [tx, ty, tz, rx, ry, rz, theta]
                         return True, [tx, ty, tz, float(rvec[0][0]), float(rvec[1][0]), float(rvec[2][0]), theta_aligned]

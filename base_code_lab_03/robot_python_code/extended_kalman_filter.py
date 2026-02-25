@@ -256,7 +256,10 @@ class ExtendedKalmanFilter:
         R_t = G_u @ Sigma_u @ G_u.T
         # Ensure positive semi-definite (numerical safety)
         R_t = 0.5 * (R_t + R_t.T)
-        return R_t
+        
+        # Add a noise floor to prevent covariance collapse when robot is stationary
+        noise_floor = np.diag([1e-5, 1e-5, 1e-5])
+        return R_t + noise_floor
 
     def get_H(self):
         """H = I3 since camera measures [x, y, theta] directly."""
