@@ -3,8 +3,8 @@ import math
 import numpy as np
 
 # UDP parameters
-localIP = "192.168.0.199" # Put your laptop computer's IP here 199
-arduinoIP = "192.168.0.200" # Put your arduino's IP here 200
+localIP = "192.168.0.148" # Put your laptop computer's IP here 199
+arduinoIP = "192.168.0.150" # Put your arduino's IP here 200
 localPort = 4010
 arduinoPort = 4010
 bufferSize = 1024
@@ -46,3 +46,11 @@ wall_corner_list = [
     [1.92, 3.32, 2.74, 3.32],
     [2.74, 3.32, 2.74, 0]
     ]
+
+# Tuning parameters
+K_SE = -5.57658736e-04
+K_SS = 1.08805227e-06
+C_R = -1.92647594e-05
+SIGMA_W2_CONST = 5.82136667e-02
+SIGMA_BETA = 0.0175  # ~1.0 degree
+SIGMA_BIAS = 0.0087  # ~0.5 degree per sqrt(s)

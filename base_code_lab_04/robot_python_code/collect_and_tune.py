@@ -10,7 +10,7 @@ from pathlib import Path
 # --- Robot Communication Logic ---
 
 class RobotConnection:
-    def __init__(self, arduino_ip="192.168.0.200", local_ip="192.168.0.199", port=4010, buffer_size=1024):
+    def __init__(self, arduino_ip="192.168.0.150", local_ip="192.168.0.148", port=4010, buffer_size=1024):
         self.arduino_ip = arduino_ip
         self.arduino_port = port
         self.local_ip = local_ip
@@ -36,8 +36,30 @@ class RobotConnection:
             # Unpack: [encoder, steering, num_lidar, ...]
             if len(data) >= 2:
                 return int(data[0]), int(data[1])
-        except socket.timeout:
+        except (socket.timeout, ValueError, IndexError):
             return None, None
+        return None, None
+
+    def flush_buffer(self):
+        """Clears stale packets from the UDP buffer."""
+        self.socket.setblocking(False)
+        try:
+            while True:
+                self.socket.recv(self.buffer_size)
+        except BlockingIOError:
+            pass
+        finally:
+            self.socket.setblocking(True)
+            self.socket.settimeout(1.0)
+
+    def get_fresh_data(self, wait_sec=2.0):
+        """Flushes buffer and waits for a fresh packet."""
+        self.flush_buffer()
+        start = time.time()
+        while time.time() - start < wait_sec:
+            enc, steer = self.receive_data()
+            if enc is not None:
+                return enc, steer
         return None, None
 
     def stop(self):
@@ -55,28 +77,30 @@ def collect_straight(robot, samples=1):
     for i in range(samples):
         print(f"\nTrial {i+1}/{samples}")
         
-        # Get initial encoder
-        enc_start, _ = robot.receive_data()
-        while enc_start is None:
-            robot.send_command(0, 0)
+        # Get initial encoder (ensuring it's fresh)
+        enc_start, _ = robot.get_fresh_data()
+        if enc_start is None:
+            print("Warning: Could not get initial encoder data!")
+            # Fallback to older method if fresh fails
             enc_start, _ = robot.receive_data()
             
         print("Driving...")
         # Drive for 2 seconds at speed 100
         start_time = time.time()
-        while time.time() - start_time < 2.0:
+        while time.time() - start_time < 3.0:
             robot.send_command(100, 0)
             time.sleep(0.05)
         
         robot.stop()
-        time.sleep(1.0) # Wait for complete stop
+        print("Waiting 20 seconds for encoder to stabilize...")
+        time.sleep(30.0)
         
-        enc_end, _ = robot.receive_data()
-        while enc_end is None:
+        enc_end, _ = robot.get_fresh_data()
+        if enc_end is None:
             enc_end, _ = robot.receive_data()
 
         delta_e = enc_end - enc_start
-        e_fwd = -delta_e # Forward is negative in some firmwares
+        e_fwd = delta_e # Forward is negative in some firmwares
         
         print(f"Stopped. Encoder delta (fwd): {e_fwd}")
         dist = float(input("Measure distance traveled (meters) and enter: "))
@@ -95,9 +119,8 @@ def collect_circle(robot, speed, steering):
     print("Instructions: Press ENTER exactly when the robot completes ONE FULL 360-turn.")
     input("Press Enter to start driving...")
 
-    enc_start, _ = robot.receive_data()
-    while enc_start is None:
-        robot.send_command(0, 0)
+    enc_start, _ = robot.get_fresh_data()
+    if enc_start is None:
         enc_start, _ = robot.receive_data()
     
     start_time = time.time()
@@ -128,9 +151,11 @@ def collect_circle(robot, speed, steering):
 
     end_time = time.time()
     robot.stop()
+    print("Waiting 20 seconds for encoder to stabilize...")
+    time.sleep(20.0)
     
-    enc_end, _ = robot.receive_data()
-    while enc_end is None:
+    enc_end, _ = robot.get_fresh_data()
+    if enc_end is None:
         enc_end, _ = robot.receive_data()
 
     duration = end_time - start_time
@@ -215,9 +240,18 @@ if __name__ == "__main__":
     parser.add_argument("--tune", action="store_true", help="Calculate parameters from existing data")
     parser.add_argument("--speed", type=int, default=80, help="Speed for circle collection")
     parser.add_argument("--steering", type=int, default=15, help="Steering for circle collection")
+    parser.add_argument("--clear", action="store_true", help="Clear all collected CSV data and exit")
     
     args = parser.parse_args()
     
+    if args.clear:
+        for f in ["straight_data.csv", "circle_data.csv"]:
+            p = Path(f)
+            if p.exists():
+                p.unlink()
+                print(f"Cleared {f}")
+        exit()
+
     if args.tune:
         tune_parameters()
     elif args.collect:
@@ -227,7 +261,7 @@ if __name__ == "__main__":
         
         try:
             if args.collect == "straight":
-                collect_straight(robot, samples=5)
+                collect_straight(robot, samples=15)
             elif args.collect == "circle":
                 collect_circle(robot, args.speed, args.steering)
         finally:

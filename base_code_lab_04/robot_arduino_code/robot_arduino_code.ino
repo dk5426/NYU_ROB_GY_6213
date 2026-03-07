@@ -2,47 +2,54 @@
 #include <SPI.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#define SendDeltaTimeInMs 100      // Number ms between messages sent to laptop
-#define ReceiveDeltaTimeInMs 10    // Number ms between checking for control signals sent from laptop
-#define NoSignalDeltaTimeInMs 2000 // Number ms between message receives from laptop before stopping robot
-char ssid[] = "Tenda_9C90E0";//"Tenda_9C95E0";//"Tenda_9C90E0";      // REPLACE with your team's router ssid
-char pass[] = "78972629";  //"82168926";//"78972629";        // REPLACE with your team's router password"78972629"
-char remoteIP[] = "192.168.0.199"; // "192.168.0.199"; // REPLACE with your laptop's IP address on your team's router
-unsigned int localPort = 4010;     // local port to listen on - no need to change
-unsigned int remotePort = 4010;    // local port to listen on - no need to change
+#define SendDeltaTimeInMs 100 // Number ms between messages sent to laptop
+#define ReceiveDeltaTimeInMs                                                   \
+  10 // Number ms between checking for control signals sent from laptop
+#define NoSignalDeltaTimeInMs                                                  \
+  2000 // Number ms between message receives from laptop before stopping robot
+char ssid[] = "R2D2"; //"Tenda_9C95E0";//"Tenda_9C90E0";      // REPLACE with
+                      // your team's router ssid
+char pass[] = "robgy6213"; //"82168926";//"78972629";        // REPLACE with
+                           // your team's router password"78972629"
+char remoteIP[] = "192.168.0.148"; // "192.168.0.199"; // REPLACE with your
+                                   // laptop's IP address on your team's router
+unsigned int localPort = 4010;  // local port to listen on - no need to change
+unsigned int remotePort = 4010; // local port to listen on - no need to change
 int status = WL_IDLE_STATUS;
 int last_time_rx = 0;
 int last_time_tx = 0;
 WiFiUDP Udp;
-char packetBuffer[256];            //buffer to hold incoming packet
+char packetBuffer[256]; // buffer to hold incoming packet
 
 // Lidar setup
 #include "RPLidar.h"
-#define RPLidarMotorPin 3          // Lidar motor control pin
-#define NumLidarRaysPerMsg 50      // How many lidar ray measurements to send at a time
+#define RPLidarMotorPin 3 // Lidar motor control pin
+#define NumLidarRaysPerMsg                                                     \
+  50 // How many lidar ray measurements to send at a time
 RPLidar lidar;
 String current_lidar_scan_data;
 int current_num_lidar_rays;
 
 // Motor Control setup
-#define RightSpeedPin 9            // Right PWM pin connect MODEL-X ENA
-#define RightMotorDirPin1 12       // Right Motor direction pin 1 to MODEL-X IN1 
-#define RightMotorDirPin2 11       // Right Motor direction pin 2 to MODEL-X IN2
-#define LeftSpeedPin 6             // Left PWM pin connect MODEL-X ENB
-#define LeftMotorDirPin1 7         // Left Motor direction pin 1 to MODEL-X IN3 
-#define LeftMotorDirPin2 8         // Left Motor direction pin 1 to MODEL-X IN4 
+#define RightSpeedPin 9      // Right PWM pin connect MODEL-X ENA
+#define RightMotorDirPin1 12 // Right Motor direction pin 1 to MODEL-X IN1
+#define RightMotorDirPin2 11 // Right Motor direction pin 2 to MODEL-X IN2
+#define LeftSpeedPin 6       // Left PWM pin connect MODEL-X ENB
+#define LeftMotorDirPin1 7   // Left Motor direction pin 1 to MODEL-X IN3
+#define LeftMotorDirPin2 8   // Left Motor direction pin 1 to MODEL-X IN4
 
 // Servo control setup
 #include <Servo.h>
-#define ServoPin 10                // Servo control pin
+#define ServoPin 10 // Servo control pin
 Servo myServo;
 
 // Encoder setup
-#define EncoderOutputA 4          // Encoder output pin A
-#define EncoderOutputB 5          // Encoder output pin B
-#define steering_angle_center 75  // REPLACE with team center angle for servor steering
+#define EncoderOutputA 4 // Encoder output pin A
+#define EncoderOutputB 5 // Encoder output pin B
+#define steering_angle_center                                                  \
+  117 // REPLACE with team center angle for servor steering
 int a_state;
-int encoder_a_last_state; 
+int encoder_a_last_state;
 int encoder_count;
 
 // Structure for storing control signals received from laptop
@@ -51,7 +58,6 @@ struct ControlSignal {
   int steering_angle = 0;
 };
 ControlSignal last_control_signal;
-
 
 // Structure for storing sensor signals sent to laptop
 struct SensorSignal {
@@ -62,10 +68,8 @@ struct SensorSignal {
 };
 SensorSignal last_sensor_signal;
 
-
 // Main setup to run on Arduino power up or reset
-void setup() 
-{
+void setup() {
   // Set up terminal serial messages
   Serial.begin(115200);
   Serial.println("Running robot base code!");
@@ -73,7 +77,8 @@ void setup()
   // Need WiFi module
   if (WiFi.status() == WL_NO_MODULE) {
     Serial.println("Communication with WiFi module failed!");
-    while (true);
+    while (true)
+      ;
   }
 
   // Attempt to connect to WiFi network
@@ -103,12 +108,12 @@ void setup()
   reset_lidar_message();
 
   // Set up speed control
-	pinMode(RightMotorDirPin1, OUTPUT); 
-	pinMode(RightMotorDirPin2, OUTPUT); 
-	pinMode(LeftSpeedPin, OUTPUT);  
-	pinMode(LeftMotorDirPin1, OUTPUT);
-  pinMode(LeftMotorDirPin2, OUTPUT); 
-  pinMode(RightSpeedPin, OUTPUT); 
+  pinMode(RightMotorDirPin1, OUTPUT);
+  pinMode(RightMotorDirPin2, OUTPUT);
+  pinMode(LeftSpeedPin, OUTPUT);
+  pinMode(LeftMotorDirPin1, OUTPUT);
+  pinMode(LeftMotorDirPin2, OUTPUT);
+  pinMode(RightSpeedPin, OUTPUT);
   stop();
 
   // Set up steering control
@@ -116,21 +121,20 @@ void setup()
   myServo.write(steering_angle_center);
 
   // Set up encoder
-  pinMode (EncoderOutputA, INPUT);
-  pinMode (EncoderOutputB, INPUT);
+  pinMode(EncoderOutputA, INPUT);
+  pinMode(EncoderOutputB, INPUT);
 
   // Set up timers for message sends and receives over bluetooth
   last_time_rx = millis();
   last_time_tx = millis();
 }
- 
-// Main loop to be run sequentially 
-void loop() 
-{
+
+// Main loop to be run sequentially
+void loop() {
   // Receive control signal messages
   ControlSignal control_signal = receive_control_signals(last_control_signal);
   last_control_signal = control_signal;
-  
+
   // Send control signals to robot hardware actuators
   control_robot(control_signal);
 
@@ -140,33 +144,31 @@ void loop()
 }
 
 // After sending lidar data to the laptop, reset the count and message.
-void reset_lidar_message()
-{
+void reset_lidar_message() {
   current_num_lidar_rays = 0;
   current_lidar_scan_data = "";
 }
 
 // Stop all robot motors
-void stop()
-{
+void stop() {
   digitalWrite(RightMotorDirPin1, LOW);
-  digitalWrite(RightMotorDirPin2,LOW);
-  digitalWrite(LeftMotorDirPin1,LOW);
-  digitalWrite(LeftMotorDirPin2,LOW);
+  digitalWrite(RightMotorDirPin2, LOW);
+  digitalWrite(LeftMotorDirPin1, LOW);
+  digitalWrite(LeftMotorDirPin2, LOW);
 }
 
 // Drive robot forward a desired speed
-void forward(int speed)
-{
+void forward(int speed) {
   digitalWrite(RightMotorDirPin1, HIGH);
-  digitalWrite(RightMotorDirPin2,LOW);
-  digitalWrite(LeftMotorDirPin1,HIGH);
-  digitalWrite(LeftMotorDirPin2,LOW);
-  analogWrite(LeftSpeedPin, speed * 0.75);
-  analogWrite(RightSpeedPin, speed);
+  digitalWrite(RightMotorDirPin2, LOW);
+  digitalWrite(LeftMotorDirPin1, HIGH);
+  digitalWrite(LeftMotorDirPin2, LOW);
+  analogWrite(LeftSpeedPin, speed );
+  analogWrite(RightSpeedPin, speed *0.5);
 }
 
-// Receive control signal messages from laptop, but only have delta time has passed, e.g. 10ms
+// Receive control signal messages from laptop, but only have delta time has
+// passed, e.g. 10ms
 ControlSignal receive_control_signals(ControlSignal last_control_signal) {
   ControlSignal control_signal = last_control_signal;
 
@@ -217,42 +219,47 @@ void lidar_update() {
     if (distance > 100 && current_num_lidar_rays < NumLidarRaysPerMsg) {
       int angle = int(lidar.getCurrentPoint().angle);
       current_num_lidar_rays += 1;
-      current_lidar_scan_data +=  "," + String(angle) + "," + String(int(distance));
+      current_lidar_scan_data +=
+          "," + String(angle) + "," + String(int(distance));
     }
   } else {
-    analogWrite(RPLidarMotorPin, 255); //stop the rplidar motor
-    
-    // try to detect RPLIDAR... 
+    analogWrite(RPLidarMotorPin, 255); // stop the rplidar motor
+
+    // try to detect RPLIDAR...
     rplidar_response_device_info_t info;
     if (IS_OK(lidar.getDeviceInfo(info, 100))) {
-       // Detected...
-       lidar.startScan();
-       
-       // Start motor rotating at max allowed speed
-       analogWrite(RPLidarMotorPin, 255);
-       delay(1000);
+      // Detected...
+      lidar.startScan();
+
+      // Start motor rotating at max allowed speed
+      analogWrite(RPLidarMotorPin, 255);
+      delay(1000);
     }
   }
 }
 
 // Get new encoder measurements
-void encoder_update() { 
-   a_state = digitalRead(EncoderOutputA); // Reads the "current" state of the outputA
-   // If the previous and the current state of the outputA are different, that means a Pulse has occured
-   if (a_state != encoder_a_last_state){     
-     // If the outputB state is different to the outputA state, that means the encoder is rotating clockwise
-     if (digitalRead(EncoderOutputB) != a_state) { 
-       encoder_count ++;
-     } else {
-       encoder_count --;
-     }
-   } 
-   encoder_a_last_state = a_state; // Updates the previous state of the outputA with the current state
- }
+void encoder_update() {
+  a_state =
+      digitalRead(EncoderOutputA); // Reads the "current" state of the outputA
+  // If the previous and the current state of the outputA are different, that
+  // means a Pulse has occured
+  if (a_state != encoder_a_last_state) {
+    // If the outputB state is different to the outputA state, that means the
+    // encoder is rotating clockwise
+    if (digitalRead(EncoderOutputB) != a_state) {
+      encoder_count++;
+    } else {
+      encoder_count--;
+    }
+  }
+  encoder_a_last_state = a_state; // Updates the previous state of the outputA
+                                  // with the current state
+}
 
-// Send a message with sensor signals to the laptop, but only after a preset time, e.g. 100 ms
-void send_sensor_signal(SensorSignal sensor_signal)
-{
+// Send a message with sensor signals to the laptop, but only after a preset
+// time, e.g. 100 ms
+void send_sensor_signal(SensorSignal sensor_signal) {
   int new_time_tx = millis();
   if (new_time_tx - last_time_tx > SendDeltaTimeInMs) {
     String msg = String(sensor_signal.encoder_count) + ",";
@@ -260,12 +267,12 @@ void send_sensor_signal(SensorSignal sensor_signal)
     msg = msg + String(current_num_lidar_rays);
     msg = msg + current_lidar_scan_data;
     reset_lidar_message();
-    //Serial.print("Sending msg: ");
-    //Serial.println(msg);
+    // Serial.print("Sending msg: ");
+    // Serial.println(msg);
 
     Udp.beginPacket(remoteIP, remotePort);
-    int   array_length  = msg.length()+1;
-    char  msg_as_char_array[array_length];
+    int array_length = msg.length() + 1;
+    char msg_as_char_array[array_length];
     msg.toCharArray(msg_as_char_array, array_length);
     Udp.write(msg_as_char_array);
     Udp.endPacket();
@@ -278,7 +285,7 @@ void send_sensor_signal(SensorSignal sensor_signal)
 }
 
 // Control the robot with desired control signal from laptop
-void control_robot(ControlSignal control_signal){
+void control_robot(ControlSignal control_signal) {
   // Set robot speed
   forward(2 * control_signal.speed);
 
@@ -288,9 +295,9 @@ void control_robot(ControlSignal control_signal){
 }
 
 // Unpack a control signal message sent from the laptop
-ControlSignal unpack_control_signal(char* packed_control_signal_as_char) {
+ControlSignal unpack_control_signal(char *packed_control_signal_as_char) {
   ControlSignal control_signal;
-  char* token;
+  char *token;
 
   // Unpack the desired speeed
   token = strtok(packed_control_signal_as_char, ",");
@@ -320,4 +327,3 @@ void printWifiStatus() {
   Serial.print(rssi);
   Serial.println(" dBm");
 }
-
