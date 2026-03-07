@@ -100,12 +100,36 @@ class Map:
     # Function to get distance to a wall from a state, in the direction of the state's theta angle.
     # Or return the distance currently believed to be the closest if its closer.
     def get_distance_to_wall(self, state, wall, closest_distance):
-        ################## Add student code here ###################
-        # Use geometry to calculate the distance from the robot to the wall, for a particular direction state.theta
-        # If the direction isn't pointed towards the wall, return closest_distance.
-        # Suggestion: Thoroughly test your code with unit tests before using
+        # Ray-Segment Intersection
+        # Ray: R(t) = [x + t*cos(theta), y + t*sin(theta)], t > 0
+        # Wall: W(u) = [x1 + u*(x2-x1), y1 + u*(y2-y1)], 0 <= u <= 1
         
-        return 0
+        x, y, theta = state.x, state.y, state.theta
+        x1, y1 = wall.corner1.x, wall.corner1.y
+        x2, y2 = wall.corner2.x, wall.corner2.y
+        
+        dx = x2 - x1
+        dy = y2 - y1
+        cos_th = math.cos(theta)
+        sin_th = math.sin(theta)
+        
+        # Denominator for intersection
+        div = (sin_th * dx - cos_th * dy)
+        if abs(div) < 1e-6:
+            # Ray is parallel to the wall, or robot is exactly on it
+            return closest_distance
+            
+        # Parameter t along the ray (must be > 0, i.e., in front of the robot)
+        t = (dx * (y1 - y) - dy * (x1 - x)) / div
+        
+        # Parameter u along the wall segment (must be between 0 and 1, i.e., between the corners)
+        u = (cos_th * (y1 - y) - sin_th * (x1 - x)) / div
+        
+        if t > 0.01 and 0 <= u <= 1:
+            if t < closest_distance:
+                return t
+        
+        return closest_distance
 
 
 # Class to hold a particle
@@ -113,40 +137,102 @@ class Particle:
     
     def __init__(self):
         self.state = State(0, 0, 0)
-        self.weight = 1
+        self.weight = 1.0
         
     # Function to create a new random particle state within a range
     def randomize_uniformly(self, xy_range):
-        ################## Add student code here ###################
-        self.state = State(0, 0, 0)
-        self.weight = 1
+        # We need to ensure we don't start particles *inside* or outside the walls.
+        # xy_range is [min_x, max_x, min_y, max_y]
+        self.state.x = random.uniform(xy_range[0], xy_range[1])
+        self.state.y = random.uniform(xy_range[2], xy_range[3])
+            
+        self.state.theta = random.uniform(-math.pi, math.pi)
+        self.weight = 1.0 / parameters.num_particles
 
     # Function to create a new random particle state with a normal distribution
     def randomize_around_initial_state(self, initial_state, state_stdev):
-        ################## Add student code here ###################
-        self.state = State(0, 0, 0)
-        self.weight = 1
+        self.state.x = random.gauss(initial_state.x, state_stdev.x)
+        self.state.y = random.gauss(initial_state.y, state_stdev.y)
+        self.state.theta = angle_wrap(random.gauss(initial_state.theta, state_stdev.theta))
+        self.weight = 1.0 / parameters.num_particles
         
     # Function to take a particle and "randomly" propagate it forward according to a motion model.
     def propagate_state(self, last_state, delta_encoder_counts, steering, delta_t):
-        ################## Add student code here ###################
-        x = 0
-        y = 0
-        theta = 0
-        self.state = State(x, y, theta)
+        # Full Fancy Slip-Bias Motion Model
+        ds_mean = parameters.K_SE * delta_encoder_counts
+        ds_std = math.sqrt(parameters.K_SS * abs(delta_encoder_counts))
+        ds = random.gauss(ds_mean, ds_std)
         
-    # Function to determine a particles weight based how well the lidar measurement matches up with the map.
-    def calculate_weight(self, lidar_signal, map):
-        ################## Add student code here ###################
-        self.weight = 0
+        dth_mean = parameters.C_R * delta_encoder_counts * steering
+        dth_std = math.sqrt(parameters.SIGMA_W2_CONST * delta_t)
+        # Random walk for bias integrated over dt
+        bias_noise = random.gauss(0, parameters.SIGMA_BIAS * math.sqrt(delta_t))
+        dth = dth_mean + random.gauss(0, dth_std) + bias_noise * delta_t
         
-    # Return the normal distribution function output.
+        # Slip angle noise
+        beta = random.gauss(0, parameters.SIGMA_BETA)
+        
+        # Midpoint integration
+        th_mid = last_state.theta + 0.5 * dth
+        self.state.x = last_state.x + ds * math.cos(th_mid + beta)
+        self.state.y = last_state.y + ds * math.sin(th_mid + beta)
+        self.state.theta = angle_wrap(last_state.theta + dth)
+        
+    # Function to determine a particles log-weight based how well the lidar measurement matches up with the map.
+    def calculate_log_weight(self, lidar_signal, map_obj):
+        # We use a log-likelihood sum to completely avoid underflow.
+        # We also subsample the rays (e.g. use ~30 rays) to speed up math and prevent overconfidence.
+        self.log_weight = 0.0
+        # The sensor static noise is parameters.distance_variance (e.g. 5.62e-6 m^2)
+        # We add 0.05 m^2 for environmental model/map uncertainty so the uniform cloud can mathematically converge.
+        variance = parameters.distance_variance + 0.05 
+        valid_rays = 0
+        
+        step = max(1, len(lidar_signal.angles) // 30) # Subsample to ~30 evenly spaced rays
+        for i in range(0, len(lidar_signal.angles), step):
+            actual_dist = lidar_signal.convert_hardware_distance(lidar_signal.distances[i])
+            
+            # Skip invalid or out-of-range sensor readings
+            if actual_dist < 0.05 or actual_dist > 8.0:
+                continue
+                
+            # convert_hardware_angle handles the LIDAR-to-robot transform
+            angle = lidar_signal.convert_hardware_angle(lidar_signal.angles[i])
+            
+            # Particle pose in map
+            ray_state = State(self.state.x, self.state.y, angle_wrap(self.state.theta + angle))
+            expected_dist = map_obj.closest_distance_to_walls(ray_state)
+            
+            # Cap expected distance to sensor max range, just in case of ray escapes the map
+            if expected_dist > 8.0:
+                expected_dist = 8.0
+            
+            # Gaussian Log-Likelihood component: -0.5 * (err^2 / process_variance)
+            self.log_weight += -0.5 * ((actual_dist - expected_dist) ** 2) / variance
+            valid_rays += 1
+            
+        if valid_rays > 0:
+            # Average the log weight so that adding more rays doesn't disproportionately sharpen the distribution
+            # This allows symmetric multi-modal clusters to form and survive accurately without instant collapse
+            self.log_weight /= valid_rays
+        else:
+            self.log_weight = -1e9 # Penalize completely invalid particles
+        
+    # Return the normal distribution function output (kept for backward compatibility if needed).
     def gaussian(self, expected_distance, distance):
-        return math.exp(-math.pow(expected_distance - distance, 2)/ 2 / parameters.distance_variance)
-
+        variance = parameters.distance_variance + 0.05
+        return (1.0/math.sqrt(2 * math.pi * variance)) * math.exp(-0.5 * (distance - expected_distance)**2 / variance)
+        
     # Deep copy the particle
     def deepcopy(self):
-        return copy.deepcopy(self)
+        new_particle = Particle()
+        new_particle.state.x = self.state.x
+        new_particle.state.y = self.state.y
+        new_particle.state.theta = self.state.theta
+        new_particle.weight = self.weight
+        if hasattr(self, 'log_weight'):
+            new_particle.log_weight = self.log_weight
+        return new_particle
         
     # Print the particle
     def print(self):
@@ -183,16 +269,40 @@ class ParticleSet:
 
     # Function to resample the particles set, i.e. make a new one with more copies of particles with higher weights.  
     def resample(self, max_weight):
-        ################## Add student code here ###################
-        self.particle_list = self.particle_list
+        new_particles = []
+        index = random.randint(0, self.num_particles - 1)
+        beta = 0.0
+        for i in range(self.num_particles):
+            beta += random.uniform(0, 2 * max_weight)
+            while beta > self.particle_list[index].weight:
+                beta -= self.particle_list[index].weight
+                index = (index + 1) % self.num_particles
+            new_particles.append(self.particle_list[index].deepcopy())
+            
+        self.particle_list = new_particles
+        # Normalize weights back to uniform and add roughening noise to prevent collapse
+        for p in self.particle_list:
+            p.weight = 1.0 / self.num_particles
+            p.state.x += random.gauss(0, 0.01) # 1cm jitter
+            p.state.y += random.gauss(0, 0.01) # 1cm jitter
+            p.state.theta = angle_wrap(p.state.theta + random.gauss(0, 0.02)) # ~1deg jitter
             
     # Calculate the mean state. 
     def update_mean_state(self):
-        ################## Add student code here ###################
-        ## Be careful how you calculate the mean theta
-        self.mean_state.x = 0
-        self.mean_state.y = 0
-        self.mean_state.theta = 0
+        sum_x = 0
+        sum_y = 0
+        sum_sin = 0
+        sum_cos = 0
+        
+        for p in self.particle_list:
+            sum_x += p.state.x * p.weight
+            sum_y += p.state.y * p.weight
+            sum_sin += math.sin(p.state.theta) * p.weight
+            sum_cos += math.cos(p.state.theta) * p.weight
+            
+        self.mean_state.x = sum_x
+        self.mean_state.y = sum_y
+        self.mean_state.theta = math.atan2(sum_sin, sum_cos)
         
     # Print the particle set. Useful for debugging.
     def print_particles(self):
@@ -222,18 +332,37 @@ class ParticleFilter:
 
     # Predict the current state from the last state.
     def prediction(self, odometry_signal, delta_t):
-        ################## Add student code here ###################
-        # Calculate the change in encoder counts from the last time step. Leverage self.last_encoder counts
-        # odometry_signal has two elements, encoder_counts and steering angle
-        # Next use a motion model to randomly propagate all particles from a deep copy of their current state. 
-        # Be sure to use the Particle class propagate state function.
-        return
+        # odometry_signal: [encoder_counts, steering_angle]
+        delta_encoder = odometry_signal[0] - self.last_encoder_counts
+        steering = odometry_signal[1]
+        
+        for p in self.particle_set.particle_list:
+            p.propagate_state(p.state.deepcopy(), delta_encoder, steering, delta_t)
+            
+        self.last_encoder_counts = odometry_signal[0]
         
     # Corrrect the predicted states.
     def correction(self, measurement_signal):
-        ################## Add student code here ###################
-        # Determine the max weight and use it to resample the particle set.
-        max_weight = 0
+        # Calculate log weights for all particles
+        for p in self.particle_set.particle_list:
+            p.calculate_log_weight(measurement_signal, self.map)
+            
+        # Log-Sum-Exp Trick to avoid underflow
+        # Find the max log_weight
+        max_log_weight = max([p.log_weight for p in self.particle_set.particle_list])
+        
+        # Convert log weights to regular weights strictly relative to the maximum
+        max_weight = 0.0
+        for p in self.particle_set.particle_list:
+            # Shift by max_log_weight keeps the largest exponent at e^0 = 1.0
+            p.weight = math.exp(p.log_weight - max_log_weight)
+            if p.weight > max_weight:
+                max_weight = p.weight
+                
+        if max_weight > 0.0:
+            self.particle_set.resample(max_weight)
+        else:
+            pass
         
     # Output to terminal the mean state.
     def print_state_estimate(self):
@@ -292,35 +421,148 @@ class ParticleFilterPlot:
             y_list.append(p.state.y)
         return x_list, y_list
         
+# NEW: Function for multi-subplot visualization
+def plot_pf_snapshots(snapshots, map_obj):
+    num_snaps = len(snapshots)
+    cols = min(num_snaps, 4) # 4 columns for 12 snaps = 3 rows
+    rows = (num_snaps + cols - 1) // cols
+    
+    # Use dark background for better contrast with green particles
+    plt.style.use('dark_background')
+    fig, axes = plt.subplots(rows, cols, figsize=(18, 5*rows), squeeze=False)
+    fig.suptitle("Particle Filter Localization Progress (SI Units: Meters)", fontsize=18, color='white')
+    
+    for i, (time_pt, mean, p_list, z_t, dr_path_x, dr_path_y, dr_th) in enumerate(snapshots):
+        r, c = i // cols, i % cols
+        ax = axes[r, c]
+        
+        # Plot walls
+        for wall in map_obj.wall_list:
+            ax.plot([wall.corner1.x, wall.corner2.x], [wall.corner1.y, wall.corner2.y], 'w-', linewidth=2)
+            
+        # Plot particles (brighter, larger, fully opaque)
+        px = [p.state.x for p in p_list]
+        py = [p.state.y for p in p_list]
+        ax.plot(px, py, 'o', color='#00FF00', markersize=3, alpha=0.6, label='Particles' if i==0 else "")
+        
+        # Plot Dead Reckoning path
+        if len(dr_path_x) > 0:
+            ax.plot(dr_path_x, dr_path_y, 'b-', linewidth=2, label='Predicted (DR)' if i==0 else "")
+            dx_dr = 0.2 * math.cos(dr_th)
+            dy_dr = 0.2 * math.sin(dr_th)
+            ax.arrow(dr_path_x[-1], dr_path_y[-1], dx_dr, dy_dr, head_width=0.08, color='blue')
+
+        # Plot mean estimate
+        ax.plot(mean.x, mean.y, 'ro', markersize=8, label='Mean Estimate' if i==0 else "")
+        dx = 0.2 * math.cos(mean.theta)
+        dy = 0.2 * math.sin(mean.theta)
+        ax.arrow(mean.x, mean.y, dx, dy, head_width=0.08, color='red')
+        
+        ax.set_title(f"T = {time_pt:.1f} s", color='white')
+        ax.set_xlabel("X (m)", color='lightgray')
+        ax.set_ylabel("Y (m)", color='lightgray')
+        ax.axis('equal')
+        ax.grid(True, alpha=0.2, color='gray')
+        ax.set_xlim(map_obj.plot_range[0], map_obj.plot_range[1])
+        ax.set_ylim(map_obj.plot_range[2], map_obj.plot_range[3])
+        
+        if i == 0:
+            ax.legend(loc='upper right', fontsize=8)
+
+    # Hide unused axes
+    for j in range(i + 1, rows * cols):
+        axes[j // cols, j % cols].axis('off')
+        
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.savefig("pf_offline_snapshots.png", dpi=300, facecolor='black')
+    print("\nSnapshots saved to pf_offline_snapshots.png")
+    # Reset style so we don't accidentally affect other plots in the session
+    plt.style.use('default')
+    plt.show()
 
 # Function used to test your PF offline with logged data.
 def offline_pf():
-    
-    # Make a map of walls
-    map = Map(parameters.wall_corner_list)
+    map_obj = Map(parameters.wall_corner_list)
 
-    # Get data to filter
-    filename = './data/robot_data_0_0_25_02_26_21_41_33.pkl'
+    # Use a specific data file from your data directory
+    # Note: Replace with your actual file name
+    import glob
+    files = glob.glob('./data/*.pkl')
+    if not files:
+        print("Error: No data files found in ./data/")
+        return
+    filename = files[-1] # Use the most recent file
+    print(f"Loading data from: {filename}")
+    
     pf_data = data_handling.get_file_data_for_pf(filename)
 
-    # Instantiate PF with no initial guess
-    particle_filter = ParticleFilter(parameters.num_particles, map, initial_state = State(0.5, 2.0, 1.57), state_stdev = State(0.1,0.1,0.1), known_start_state=True, encoder_counts_0=pf_data[0][2].encoder_counts)
+    # Instantiate PF (Adjust initial_state as needed)
+    start_row = pf_data[0]
+    initial_x, initial_y, initial_th = 0.2, 0.09, 0.0 # Example starting pose
+    
+    particle_filter = ParticleFilter(
+        parameters.num_particles, 
+        map_obj, 
+        initial_state=State(initial_x, initial_y, initial_th), 
+        state_stdev=State(0.2, 0.2, 0.1), 
+        known_start_state=False, # Changed to False for Unknown Start
+        encoder_counts_0=start_row[2].encoder_counts
+    )
 
-    # Create plotting tool for particles
-    particle_filter_plot = ParticleFilterPlot(map)
+    # Dead reckoning tracking
+    dr_x, dr_y, dr_th = initial_x, initial_y, initial_th
+    dr_path_x, dr_path_y = [dr_x], [dr_y]
 
-    # Loop over pf data
+    snapshots = []
+    num_snaps = 12
+    
+    # Capture T=0 Snapshot BEFORE the movement loop
+    snapshots.append((
+        0.0,
+        particle_filter.particle_set.mean_state.deepcopy(),
+        [p.deepcopy() for p in particle_filter.particle_set.particle_list],
+        start_row[2],
+        list(dr_path_x), list(dr_path_y), dr_th
+    ))
+
+    # Indices for snapshots natively spaced out (11 more to take)
+    indices = [int(i * (len(pf_data)-1) / (num_snaps-1)) for i in range(1, num_snaps)]
+    
+    print("Running Particle Filter Offline...")
     for t in range(1, len(pf_data)):
         row = pf_data[t]
-        delta_t = pf_data[t][0] - pf_data[t-1][0] # time step size
-        u_t = np.array([row[2].encoder_counts, row[2].steering]) # robot_sensor_signal
-        z_t = row[2] # lidar_sensor_signal
+        delta_t = pf_data[t][0] - pf_data[t-1][0]
+        u_t = np.array([row[2].encoder_counts, row[2].steering])
+        z_t = row[2]
+        
+        # Dead Reckoning Update
+        delta_e = row[2].encoder_counts - pf_data[t-1][2].encoder_counts
+        dt_val = max(delta_t, 1e-9)
+        ds = parameters.K_SE * delta_e
+        w = (parameters.C_R * delta_e * row[2].steering) / dt_val
+        dth = w * dt_val
+        th_mid = dr_th + 0.5 * dth
+        dr_x += ds * math.cos(th_mid)
+        dr_y += ds * math.sin(th_mid)
+        dr_th = angle_wrap(dr_th + dth)
+        dr_path_x.append(dr_x)
+        dr_path_y.append(dr_y)
 
-        # Run the PF for a time step
         particle_filter.update(u_t, z_t, delta_t)
-        particle_filter_plot.update(particle_filter.particle_set.mean_state, particle_filter.particle_set, z_t, False)
+        
+        if t in indices or t == len(pf_data)-1:
+            snapshots.append((
+                row[0] - pf_data[0][0], 
+                particle_filter.particle_set.mean_state.deepcopy(),
+                [p.deepcopy() for p in particle_filter.particle_set.particle_list],
+                z_t,
+                list(dr_path_x),
+                list(dr_path_y),
+                dr_th
+            ))
 
-    particle_filter_plot.update(particle_filter.particle_set.mean_state, particle_filter.particle_set, z_t, False)
+    # Single plot with multiple subplots
+    plot_pf_snapshots(snapshots, map_obj)
 
         
 
