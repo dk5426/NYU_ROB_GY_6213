@@ -22,7 +22,7 @@ def create_udp_communication(arduinoIP, localIP, arduinoPort, localPort, bufferS
         return udp, True
     except:
         print("Failed to create udp communication!")
-        return _, False
+        return None, False
         
         
 # Class to hold the UPD over wifi connection setup

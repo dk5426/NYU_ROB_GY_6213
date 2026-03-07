@@ -231,6 +231,6 @@ if __name__ == "__main__":
 
     robot = RobotConnection(arduino_ip=params.arduinoIP, local_ip=params.localIP)
     
-    SQUARE_TRAJ = [(100, -15, 2.5), (60, 0, 1.5)] 
+    SQUARE_TRAJ = [(100, -15, 2.5), (60, 0, 1.5), (100, -15, 2.5), (60, 0, 1.5)] 
     
     execute_trajectory(robot, SQUARE_TRAJ, k_se, k_ss, c_r, sigma_w2, sigma_beta, sigma_bias)

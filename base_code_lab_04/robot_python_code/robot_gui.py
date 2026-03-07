@@ -15,6 +15,9 @@ from time import time
 from robot import Robot
 import robot_python_code
 import parameters
+import particle_filter
+from particle_filter import ParticleFilter
+import data_handling
 
 # Global variables
 logging = False
@@ -60,7 +63,6 @@ def main():
         lidar_distance_list.append(max_lidar_range)
         lidar_cos_angle_list.append(math.cos(i*lidar_angle_res/180*math.pi))
         lidar_sin_angle_list.append(math.sin(i*lidar_angle_res/180*math.pi))
-
     # Set dark mode for gui
     dark = ui.dark_mode()
     dark.value = True
@@ -169,21 +171,35 @@ def main():
             plt.xlim(-2,2)
             plt.ylim(-2,2)
 
-    # Visualize the lidar scans
+    # Visualize localization predictions and particles
     def show_localization_plot():
-        with main_plot:
-            fig = main_plot.fig
+        with pf_plot:
+            fig = pf_plot.fig
             fig.patch.set_facecolor('black')
             plt.clf()
+            
             plt.style.use('dark_background')
             plt.tick_params(axis='x', colors='lightgray')
             plt.tick_params(axis='y', colors='lightgray')
-            plt.plot(x_est, y_est, 'ro')
+            
+            # Plot Walls
+            for wall in robot.particle_filter.map.wall_list:
+                plt.plot([wall.corner1.x, wall.corner2.x], [wall.corner1.y, wall.corner2.y], 'w-', linewidth=2)
+                
+            # Plot Particles
+            px = [p.state.x for p in robot.particle_filter.particle_set.particle_list]
+            py = [p.state.y for p in robot.particle_filter.particle_set.particle_list]
+            plt.scatter(px, py, c='lime', s=10, alpha=0.8)
+            
+            # Plot Mean Estimate
+            mean_state = robot.particle_filter.particle_set.mean_state
+            plt.plot(mean_state.x, mean_state.y, 'ro', markersize=8)
 
-            plt.grid(True)
-            plot_range = 1
-            plt.xlim(-plot_range, plot_range)
-            plt.ylim(-plot_range, plot_range)
+            plt.axis('equal')
+            plt.grid(True, alpha=0.2, color='gray')
+            plt.xlim(robot.particle_filter.map.plot_range[0], robot.particle_filter.map.plot_range[1])
+            plt.ylim(robot.particle_filter.map.plot_range[2], robot.particle_filter.map.plot_range[3])
+            pf_plot.update()
 
     # Run an experiment trial from a button push
     def run_trial():
@@ -199,16 +215,14 @@ def main():
     with ui.card().classes('w-full  items-center'):
         ui.label('ROB-GY - 6213: Robot Navigation & Localization').style('font-size: 24px;')
     
-    # Create the video camera, lidar, and encoder sensor visualizations. These may be dummys for lab 01.
+    # Create the video camera, lidar, and encoder sensor visualizations.
     with ui.card().classes('w-full'):
         with ui.grid(columns=3).classes('w-full items-center'):
             with ui.card().classes('w-full items-center h-60'):
-                if stream_video:
-                    video_image = ui.interactive_image('/video/frame').classes('w-full h-full')
-                else:
-                    ui.image('./a_robot_image.jpg').props('height=2')
-                    video_image = None
+                ui.label('Particle Filter Map').style('text-align: center; color: white;')
+                pf_plot = ui.pyplot(figsize=(3, 3))
             with ui.card().classes('w-full items-center h-60'):
+                ui.label('Lidar Scan').style('text-align: center; color: white;')
                 main_plot = ui.pyplot(figsize=(3, 3))
             with ui.card().classes('items-center h-60'):
                 ui.label('Encoder:').style('text-align: center;')
@@ -249,8 +263,14 @@ def main():
         robot.control_loop(cmd_speed, cmd_steering_angle, logging_switch.value)
         encoder_count_label.set_text(robot.robot_sensor_signal.encoder_counts)
         update_lidar_data()
-        show_lidar_plot()
-        #show_localization_plot()
+        
+        try:
+            show_lidar_plot()
+            show_localization_plot()
+        except Exception as e:
+            import traceback
+            print(f"Error in plotting: {e}")
+            traceback.print_exc()
         #update_video(video_image)
         
     ui.timer(0.1, control_loop)

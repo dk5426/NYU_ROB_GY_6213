@@ -423,14 +423,15 @@ class ParticleFilterPlot:
         
 # NEW: Function for multi-subplot visualization
 def plot_pf_snapshots(snapshots, map_obj):
+    # Determine grid size based on number of snapshots
     num_snaps = len(snapshots)
-    cols = min(num_snaps, 4) # 4 columns for 12 snaps = 3 rows
-    rows = (num_snaps + cols - 1) // cols
+    cols = min(4, num_snaps)
+    rows = math.ceil(num_snaps / cols)
     
-    # Use dark background for better contrast with green particles
-    plt.style.use('dark_background')
+    # White background by default (remove dark_background)
+    
     fig, axes = plt.subplots(rows, cols, figsize=(18, 5*rows), squeeze=False)
-    fig.suptitle("Particle Filter Localization Progress (SI Units: Meters)", fontsize=18, color='white')
+    fig.suptitle("Particle Filter Localization Progress (SI Units: Meters)", fontsize=18, color='black')
     
     for i, (time_pt, mean, p_list, z_t, dr_path_x, dr_path_y, dr_th) in enumerate(snapshots):
         r, c = i // cols, i % cols
@@ -438,12 +439,12 @@ def plot_pf_snapshots(snapshots, map_obj):
         
         # Plot walls
         for wall in map_obj.wall_list:
-            ax.plot([wall.corner1.x, wall.corner2.x], [wall.corner1.y, wall.corner2.y], 'w-', linewidth=2)
+            ax.plot([wall.corner1.x, wall.corner2.x], [wall.corner1.y, wall.corner2.y], 'k-', linewidth=2)
             
         # Plot particles (brighter, larger, fully opaque)
         px = [p.state.x for p in p_list]
         py = [p.state.y for p in p_list]
-        ax.plot(px, py, 'o', color='#00FF00', markersize=3, alpha=0.6, label='Particles' if i==0 else "")
+        ax.plot(px, py, 'g.', markersize=3, alpha=0.6, label='Particles' if i==0 else "")
         
         # Plot Dead Reckoning path
         if len(dr_path_x) > 0:
@@ -458,24 +459,27 @@ def plot_pf_snapshots(snapshots, map_obj):
         dy = 0.2 * math.sin(mean.theta)
         ax.arrow(mean.x, mean.y, dx, dy, head_width=0.08, color='red')
         
-        ax.set_title(f"T = {time_pt:.1f} s", color='white')
-        ax.set_xlabel("X (m)", color='lightgray')
-        ax.set_ylabel("Y (m)", color='lightgray')
+        ax.set_title(f"T = {time_pt:.1f} s", color='black')
+        ax.set_xlabel("X (m)", color='black')
+        ax.set_ylabel("Y (m)", color='black')
         ax.axis('equal')
-        ax.grid(True, alpha=0.2, color='gray')
+        ax.grid(True, alpha=0.2, color='lightgray')
         ax.set_xlim(map_obj.plot_range[0], map_obj.plot_range[1])
         ax.set_ylim(map_obj.plot_range[2], map_obj.plot_range[3])
         
         if i == 0:
             ax.legend(loc='upper right', fontsize=8)
 
-    # Hide unused axes
+        # Hide any unused subplots
     for j in range(i + 1, rows * cols):
-        axes[j // cols, j % cols].axis('off')
+        fig.delaxes(axes[j // cols, j % cols])
         
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig("pf_offline_snapshots.png", dpi=300, facecolor='black')
-    print("\nSnapshots saved to pf_offline_snapshots.png")
+    # Format the global legend for the white background
+    fig.legend(loc='upper right', bbox_to_anchor=(0.95, 0.95), facecolor='white', edgecolor='black', fontsize=9)
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.92, right=0.9)
+    plt.savefig('pf_offline_snapshots.png', dpi=300, bbox_inches='tight', facecolor='white')
+    print("Saved offline particle filter snapshots to 'pf_offline_snapshots.png'")
     # Reset style so we don't accidentally affect other plots in the session
     plt.style.use('default')
     plt.show()
@@ -491,7 +495,8 @@ def offline_pf():
     if not files:
         print("Error: No data files found in ./data/")
         return
-    filename = files[-1] # Use the most recent file
+    # filename = files[-1]
+    filename = './data/robot_data_100_-15_07_03_26_17_57_53.pkl'  # Use the most recent file
     print(f"Loading data from: {filename}")
     
     pf_data = data_handling.get_file_data_for_pf(filename)
@@ -514,7 +519,6 @@ def offline_pf():
     dr_path_x, dr_path_y = [dr_x], [dr_y]
 
     snapshots = []
-    num_snaps = 12
     
     # Capture T=0 Snapshot BEFORE the movement loop
     snapshots.append((
@@ -525,13 +529,15 @@ def offline_pf():
         list(dr_path_x), list(dr_path_y), dr_th
     ))
 
-    # Indices for snapshots natively spaced out (11 more to take)
-    indices = [int(i * (len(pf_data)-1) / (num_snaps-1)) for i in range(1, num_snaps)]
+    # Time interval between snapshots in seconds
+    snapshot_interval = 0.72 
+    next_snapshot_time = snapshot_interval
     
     print("Running Particle Filter Offline...")
     for t in range(1, len(pf_data)):
         row = pf_data[t]
         delta_t = pf_data[t][0] - pf_data[t-1][0]
+        current_time = row[0] - pf_data[0][0]
         u_t = np.array([row[2].encoder_counts, row[2].steering])
         z_t = row[2]
         
@@ -550,9 +556,9 @@ def offline_pf():
 
         particle_filter.update(u_t, z_t, delta_t)
         
-        if t in indices or t == len(pf_data)-1:
+        if current_time >= next_snapshot_time or t == len(pf_data)-1:
             snapshots.append((
-                row[0] - pf_data[0][0], 
+                current_time, 
                 particle_filter.particle_set.mean_state.deepcopy(),
                 [p.deepcopy() for p in particle_filter.particle_set.particle_list],
                 z_t,
@@ -560,6 +566,7 @@ def offline_pf():
                 list(dr_path_y),
                 dr_th
             ))
+            next_snapshot_time += snapshot_interval
 
     # Single plot with multiple subplots
     plot_pf_snapshots(snapshots, map_obj)
