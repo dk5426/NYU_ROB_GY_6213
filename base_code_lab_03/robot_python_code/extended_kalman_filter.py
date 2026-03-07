@@ -1,46 +1,14 @@
-# Extended Kalman Filter for Lab 03
-# Motion model: AckermannBicycle (mid-heading) using Lab 2 calibrated constants
-# Measurement model: direct camera pose z_t = [x, y, theta] (H = I3)
-#
-# Lab 2 calibrated constants (FancySlipBias / Ackermann hybrid):
-#   K_SE  = 2.882760e-04  m/count  (distance per encoder count)
-#   K_SS  = 6.338605e-08  m^2/count (distance variance per count)
-#   C_R   = 3.526364e-05  (rad/s) per (count/s)
-#   SIGMA_W2_CONST = 1.601539e-03  (rad/s)^2
-#   A1, A2, A3: speed cmd -> counts/sec polynomial coefficients
-#
-# Camera noise (from Step 1.5 characterization, 10 poses):
-#   sigma_x^2  ~ 0.01535 m^2
-#   sigma_y^2  ~ 0.02195 m^2
-#   sigma_th^2 ~ 7.03e-4 rad^2
-
-# External libraries
 import numpy as np
 import math
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
-
-# Local libraries
 import parameters
 import data_handling
 
-# --------------------------------------------------------------------------
-# Lab 2 motion model constants are now imported from parameters.py
-# --------------------------------------------------------------------------
-
-DTH_EPS = 1e-8
-
-
 def _wrap_to_pi(angle):
-    """Wrap angle to [-pi, pi]."""
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
-
-# --------------------------------------------------------------------------
-# Main class
-# --------------------------------------------------------------------------
 class ExtendedKalmanFilter:
-
     def __init__(self, x_0, Sigma_0, encoder_counts_0):
         self.state_mean = np.array(x_0, dtype=float)
         self.state_covariance = np.array(Sigma_0, dtype=float)
@@ -48,262 +16,148 @@ class ExtendedKalmanFilter:
         self.predicted_state_covariance = parameters.I3 * 1.0
         self.last_encoder_counts = float(encoder_counts_0)
 
-    # ------------------------------------------------------------------
-    # PUBLIC API
-    # ------------------------------------------------------------------
-
+    # Call the prediction and correction steps
     def update(self, u_t, z_t, delta_t):
-        """Call prediction then conditional correction."""
         self.prediction_step(u_t, delta_t)
         self.correction_step(z_t)
 
-    # ------------------------------------------------------------------
-    # PREDICTION STEP
-    # ------------------------------------------------------------------
-
+    # Set the EKF's predicted state mean and covariance matrix
     def prediction_step(self, u_t, delta_t):
-        """
-        u_t = [encoder_counts, steering_cmd]
-        delta_t = time step (seconds)
-        """
         encoder_counts = float(u_t[0])
-        steering_cmd   = float(u_t[1])
+        steering_angle_command = float(u_t[1])
 
-        # Predicted mean via kinematic model
+        # Prediction via kinematic model
         x_bar, s = self.g_function(self.state_mean, u_t, delta_t)
         self.predicted_state_mean = x_bar
 
-        # Jacobians
+        # Jacobians and noise
         G_x = self.get_G_x(self.state_mean, s)
-        G_u = self.get_G_u(self.state_mean, u_t, delta_t, s)
-
-        # Process noise
+        G_u = self.get_G_u(self.state_mean, delta_t)
         R_t = self.get_R(s, u_t, delta_t)
 
-        # Predicted covariance
-        self.predicted_state_covariance = (
-            G_x @ self.state_covariance @ G_x.T + R_t
-        )
-
-        # Commit prediction as current estimate (correction may refine)
+        self.predicted_state_covariance = G_x @ self.state_covariance @ G_x.T + R_t
+        
+        # Update estimate
         self.state_mean = self.predicted_state_mean.copy()
         self.state_covariance = self.predicted_state_covariance.copy()
+        
+        # Store encoder counts for next step
+        self.last_encoder_counts = encoder_counts
 
-    # ------------------------------------------------------------------
-    # CORRECTION STEP
-    # ------------------------------------------------------------------
-
+    # Set the EKF's corrected state mean and covariance matrix
     def correction_step(self, z_t):
-        """
-        z_t = [x_cam, y_cam, theta_cam]
-        Skip if z_t is None, all-zero, or contains NaN.
-        """
-        if z_t is None:
-            return
-        z = np.array(z_t, dtype=float)
-        # Skip if measurement is invalid (all zeros or NaN)
-        if np.any(np.isnan(z)) or (z[0] == 0.0 and z[1] == 0.0):
+        if z_t is None or np.any(np.isnan(z_t)) or (z_t[0] == 0.0 and z_t[1] == 0.0):
             return
 
+        z = np.array(z_t, dtype=float)
         H = self.get_H()
         Q = self.get_Q()
 
         # Innovation
-        innovation = z - H @ self.predicted_state_mean
+        innovation = z - self.get_h_function(self.predicted_state_mean)
         innovation[2] = _wrap_to_pi(innovation[2])
 
-        # Kalman gain  K = Sigma_bar * H^T * (H * Sigma_bar * H^T + Q)^-1
-        # Since H = I3, simplifies to:  K = Sigma_bar * (Sigma_bar + Q)^-1
-        S = self.predicted_state_covariance + Q
-        K = self.predicted_state_covariance @ np.linalg.inv(S)
+        # Kalman gain
+        S = H @ self.predicted_state_covariance @ H.T + Q
+        K = self.predicted_state_covariance @ H.T @ np.linalg.inv(S)
 
-        # Updated state
+        # Update
         self.state_mean = self.predicted_state_mean + K @ innovation
         self.state_mean[2] = _wrap_to_pi(self.state_mean[2])
+        self.state_covariance = (parameters.I3 - K @ H) @ self.predicted_state_covariance
 
-        # Updated covariance
-        self.state_covariance = (parameters.I3 - K) @ self.predicted_state_covariance
-
-    # ------------------------------------------------------------------
-    # HELPERS: distance & angular velocity from controls
-    # ------------------------------------------------------------------
-
+    # Function to calculate distance from encoder counts
     def distance_travelled_s(self, encoder_counts):
-        """Convert cumulative encoder count to distance (m)."""
         delta_e = float(encoder_counts) - self.last_encoder_counts
-        self.last_encoder_counts = float(encoder_counts)
-        e_fwd = -delta_e   # forward motion: encoder counts go negative
-        return parameters.K_SE * e_fwd, abs(e_fwd)   # (s in meters, |e_fwd| for variance)
+        e_fwd = -delta_e
+        return parameters.K_SE * e_fwd
 
-    def rotational_velocity_w(self, v_cmd, steering_cmd):
-        """
-        Linear yaw model: w = C_R * r(v) * alpha_cmd
-        v_cmd in speed command units [40..100]
-        steering_cmd in servo units [-20..20]
-        Returns w in rad/s.
-        """
-        v = float(np.clip(v_cmd, 40.0, 100.0))
-        r = max(0.0, parameters.A1 * v + parameters.A2 * v**2 + parameters.A3 * v**3)  # counts/sec
-        return parameters.C_R * r * float(steering_cmd)
+    # Function to calculate rotational velocity from steering
+    def rotational_velocity_w(self, steering_angle_command):
+        v = float(np.clip(parameters.DEFAULT_SPEED_CMD, 40.0, 100.0))
+        r = max(0.0, parameters.A1 * v + parameters.A2 * v**2 + parameters.A3 * v**3)
+        return parameters.C_R * r * float(steering_angle_command)
 
-    # ------------------------------------------------------------------
-    # TRANSITION FUNCTION
-    # ------------------------------------------------------------------
-
+    # The nonlinear transition equation
     def g_function(self, x_tm1, u_t, delta_t):
-        """
-        Ackermann mid-heading kinematic update (deterministic mean).
-        Returns (x_t, s) where s is distance travelled in meters.
-        """
-        encoder_counts = float(u_t[0])
-        v_cmd          = parameters.default_speed_cmd   # need speed; use stored
-        steering_cmd   = float(u_t[1])
+        s = self.distance_travelled_s(u_t[0])
+        w = self.rotational_velocity_w(u_t[1])
+        dth = w * delta_t
 
-        s, e_fwd = self.distance_travelled_s(encoder_counts)
-        w       = self.rotational_velocity_w(v_cmd, steering_cmd)
-        dth     = w * delta_t
-
-        x, y, th = float(x_tm1[0]), float(x_tm1[1]), float(x_tm1[2])
-        th_mid = th + 0.5 * dth
-        x_new  = x  + s * math.cos(th_mid)
-        y_new  = y  + s * math.sin(th_mid)
-        th_new = _wrap_to_pi(th + dth)
-
+        th_mid = x_tm1[2] + 0.5 * dth
+        x_new = x_tm1[0] + s * math.cos(th_mid)
+        y_new = x_tm1[1] + s * math.sin(th_mid)
+        th_new = _wrap_to_pi(x_tm1[2] + dth)
         return np.array([x_new, y_new, th_new]), s
 
-    # ------------------------------------------------------------------
-    # JACOBIANS
-    # ------------------------------------------------------------------
+    # The nonlinear measurement function
+    def get_h_function(self, x_t):
+        return x_t
 
+    # Jacobian dg/dx
     def get_G_x(self, x_tm1, s):
-        """
-        Jacobian of g wrt state x = [x, y, theta].
-        dg/dx = [[1, 0, -s*sin(th + dth/2)],
-                 [0, 1,  s*cos(th + dth/2)],
-                 [0, 0,  1              ]]
-        We approximate dth/2 ~ 0 for the Jacobian (small angle step).
-        """
-        th = float(x_tm1[2])
+        th = x_tm1[2]
         return np.array([
             [1.0, 0.0, -s * math.sin(th)],
             [0.0, 1.0,  s * math.cos(th)],
-            [0.0, 0.0,  1.0             ]
+            [0.0, 0.0,  1.0]
         ])
 
-    def get_G_u(self, x_tm1, u_t, delta_t, s):
-        """
-        Jacobian of g wrt control u = [encoder_counts, steering_cmd].
-        Column 0: dg/d(encoder_counts)  -> via ds/d(ec) = K_SE
-        Column 1: dg/d(steering_cmd)    -> via dw/d(sc) = C_R * r(v)
-        """
-        th = float(x_tm1[2])
-        v_cmd       = parameters.default_speed_cmd
-        steering_cmd = float(u_t[1])
-
-        # ds/d(encoder_counts) = -K_SE  (negative because e_fwd = -delta_e)
+    # Jacobian dg/du
+    def get_G_u(self, x_tm1, delta_t):
+        th = x_tm1[2]
         ds_dec = -parameters.K_SE
-
-        # dw/d(steering_cmd) = C_R * r(v)
-        v = float(np.clip(v_cmd, 40.0, 100.0))
+        
+        v = float(np.clip(parameters.DEFAULT_SPEED_CMD, 40.0, 100.0))
         r = max(0.0, parameters.A1 * v + parameters.A2 * v**2 + parameters.A3 * v**3)
         dw_dsc = parameters.C_R * r
 
-        # dg/d(encoder_counts): same direction as dg/ds
-        dg_dec = np.array([
-            math.cos(th) * ds_dec,
-            math.sin(th) * ds_dec,
-            0.0
-        ])
+        dg_dec = np.array([math.cos(th) * ds_dec, math.sin(th) * ds_dec, 0.0])
+        dg_dsc = np.array([0.0, 0.0, dw_dsc * delta_t])
+        return np.column_stack([dg_dec, dg_dsc])
 
-        # dg/d(steering_cmd): rotation changes
-        dg_dsc = np.array([
-            0.0,
-            0.0,
-            dw_dsc * delta_t
-        ])
+    # Jacobian dh/dx
+    def get_H(self):
+        return parameters.I3.astype(float)
 
-        return np.column_stack([dg_dec, dg_dsc])  # shape (3, 2)
-
-    # ------------------------------------------------------------------
-    # NOISE COVARIANCE MATRICES
-    # ------------------------------------------------------------------
-
-    def get_R(self, s, u_t=None, delta_t=1.0):
-        """
-        Process noise covariance R_t = G_u * Sigma_u * G_u^T
-        Sigma_u = diag(sigma_s^2, sigma_w^2)
-        sigma_s^2 = K_SS * |e_fwd|   (proportional to distance)
-        sigma_w^2 = SIGMA_W2_CONST * delta_t^2  (variance of w integrated over dt)
-        """
-        if u_t is None:
-            return parameters.I3 * 0.01
-
-        x_tm1 = self.state_mean
-        v_cmd = parameters.default_speed_cmd
-
-        # Variance of s
-        encoder_counts = float(u_t[0])
-        delta_e = encoder_counts - self.last_encoder_counts
-        e_fwd = abs(delta_e)
-        sigma_s2 = max(0.0, parameters.K_SS * e_fwd)
-
-        # Variance of w integrated: sigma_w^2 * dt^2
+    # Transition process noise R_t
+    def get_R(self, s, u_t, delta_t):
+        delta_e = float(u_t[0]) - self.last_encoder_counts
+        sigma_s2 = max(0.0, parameters.K_SS * abs(delta_e))
         sigma_theta2 = parameters.SIGMA_W2_CONST * delta_t**2
 
         Sigma_u = np.diag([sigma_s2, sigma_theta2])
-        G_u = self.get_G_u(x_tm1, u_t, delta_t, s)
-
-        R_t = G_u @ Sigma_u @ G_u.T
-        # Ensure positive semi-definite (numerical safety)
-        R_t = 0.5 * (R_t + R_t.T)
+        G_u = self.get_G_u(self.state_mean, delta_t)
         
-        # Add a noise floor to prevent covariance collapse when robot is stationary
-        noise_floor = np.diag([1e-5, 1e-5, 1e-5])
-        return R_t + noise_floor
+        R_t = G_u @ Sigma_u @ G_u.T
+        R_t = 0.5 * (R_t + R_t.T) + np.diag([1e-5, 1e-5, 1e-5])
+        return R_t
 
-    def get_H(self):
-        """H = I3 since camera measures [x, y, theta] directly."""
-        return parameters.I3.astype(float)
-
+    # Measurement noise Q_t
     def get_Q(self):
-        """
-        Measurement noise Q_t from camera characterization (10 poses).
-        Units: meters and radians.
-        """
         return np.diag([
             parameters.sigma_cam_x2,
             parameters.sigma_cam_y2,
             parameters.sigma_cam_theta2
         ])
 
-
-# --------------------------------------------------------------------------
-# Plotting helper
-# --------------------------------------------------------------------------
 class KalmanFilterPlot:
-
     def __init__(self):
         self.dir_length = 0.1
-        fig, ax = plt.subplots()
-        self.ax = ax
-        self.fig = fig
+        self.fig, self.ax = plt.subplots()
 
     def update(self, state_mean, state_covariance):
         plt.clf()
         ax = self.fig.gca()
-
-        # Plot covariance ellipse (scaled for visibility)
         scale = parameters.covariance_plot_scale
-        cov2 = state_covariance * scale
-        lambda_, v = np.linalg.eig(cov2)
+        lambda_, v = np.linalg.eig(state_covariance * scale)
         lambda_ = np.sqrt(np.abs(lambda_))
-        xy = (state_mean[0], state_mean[1])
+        
         angle = np.rad2deg(np.arctan2(*v[:, 0][::-1]))
-        ell = Ellipse(xy, alpha=0.5, facecolor='red',
+        ell = Ellipse((state_mean[0], state_mean[1]), alpha=0.5, facecolor='red',
                       width=lambda_[0], height=lambda_[1], angle=angle)
         ax.add_artist(ell)
-
-        # Plot state estimate dot + heading arrow
+        
         plt.plot(state_mean[0], state_mean[1], 'ro')
         plt.plot(
             [state_mean[0], state_mean[0] + self.dir_length * math.cos(state_mean[2])],
@@ -317,21 +171,14 @@ class KalmanFilterPlot:
         plt.draw()
         plt.pause(0.1)
 
-
-# --------------------------------------------------------------------------
-# Offline EKF runner
-# --------------------------------------------------------------------------
+# Code to run your EKF offline with a data file.
 def offline_efk():
-    """Load a data file and run the EKF offline over it."""
-
     filename = './data/robot_data_68_0_06_02_26_17_12_19.pkl'
     ekf_data = data_handling.get_file_data_for_kf(filename)
 
-    # Initial state (slightly offset from first camera reading to test robustness)
     x_0 = [ekf_data[0][3][0] + 0.5, ekf_data[0][3][1], ekf_data[0][3][5]]
-    Sigma_0 = parameters.I3 * 10.0   # large initial uncertainty
+    Sigma_0 = parameters.I3 * 10.0
     encoder_counts_0 = ekf_data[0][2].encoder_counts
-
     ekf = ExtendedKalmanFilter(x_0, Sigma_0, encoder_counts_0)
     kf_plot = KalmanFilterPlot()
 
@@ -344,7 +191,7 @@ def offline_efk():
         ekf.update(u_t, z_t, delta_t)
         kf_plot.update(ekf.state_mean, ekf.state_covariance[0:2, 0:2])
 
-
 ####### MAIN #######
-if False:
-    offline_efk()
+if __name__ == "__main__":
+    if False:
+        offline_efk()
