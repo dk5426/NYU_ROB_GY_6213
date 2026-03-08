@@ -284,6 +284,7 @@ class ParticleSet:
         
     # Function to reset particles and random locations in the workspace.
     def generate_uniform_random_particles(self, xy_range):
+        self.particle_list = [] # Clear existing list to prevent memory leak/ballooning
         for i in range(self.num_particles):
             random_particle = Particle()
             random_particle.randomize_uniformly(xy_range)
@@ -291,6 +292,7 @@ class ParticleSet:
 
     # Function to reset particles, normally distributed around the initial state. 
     def generate_initial_state_particles(self, initial_state, state_stdev):
+        self.particle_list = [] # Clear existing list to prevent memory leak/ballooning
         for i in range(self.num_particles):
             random_particle = Particle()
             random_particle.randomize_around_initial_state(initial_state, state_stdev)
