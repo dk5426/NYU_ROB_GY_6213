@@ -34,17 +34,20 @@ class UDPCommunication:
         self.localPort = localPort
         self.bufferSize = bufferSize
         self.UDPServerSocket = socket.socket(family = socket.AF_INET, type = socket.SOCK_DGRAM)
+        self.UDPServerSocket.settimeout(0.5) # Prevent blocking forever if robot disconnects
         self.UDPServerSocket.bind((localIP, localPort))
         
     # Receive a message from the robot
     def receive_msg(self):
-        bytesAddressPair = self.UDPServerSocket.recvfrom(self.bufferSize)
-        message = bytesAddressPair[0]
-        address = bytesAddressPair[1]
-        clientMsg = "{}".format(message.decode())
-        clientIP = "{}".format(address)
-        
-        return clientMsg
+        try:
+            bytesAddressPair = self.UDPServerSocket.recvfrom(self.bufferSize)
+            message = bytesAddressPair[0]
+            return message.decode()
+        except socket.timeout:
+            return ""
+        except Exception as e:
+            print(f"UDP Receive Error: {e}")
+            return ""
        
     # Send a message to the robot
     def send_msg(self, msg):

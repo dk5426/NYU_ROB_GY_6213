@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import math
 import numpy as np
 import random
+import time
 
 # Local libraries
 import parameters
@@ -17,7 +18,7 @@ def angle_wrap(angle):
         angle += 2*math.pi
     return angle
 
-# Helper class to store and manipulate your states.
+# State of any object in 2D
 class State:
 
     # Constructor
@@ -34,9 +35,13 @@ class State:
     def distance_to_squared(self, other_state):
         return math.pow(self.x - other_state.x, 2) + math.pow(self.y - other_state.y, 2)
 
+    # return a shallow copy of the state.
+    def copy(self):
+        return State(self.x, self.y, self.theta)
+
     # return a deep copy of the state.
     def deepcopy(self):
-        return copy.deepcopy(self)
+        return State(self.x, self.y, self.theta)
         
     # Print the state
     def print(self):
@@ -92,26 +97,26 @@ class Map:
     # Function to calculate the distance between any state and its closest wall, accounting for directon of the state.
     def closest_distance_to_walls(self, state):
         closest_distance = 999999999999
+        cos_th = math.cos(state.theta)
+        sin_th = math.sin(state.theta)
         for wall in self.wall_list:
-            closest_distance = self.get_distance_to_wall(state, wall, closest_distance)
+            closest_distance = self.get_distance_to_wall(state, wall, closest_distance, cos_th, sin_th)
         
         return closest_distance
         
     # Function to get distance to a wall from a state, in the direction of the state's theta angle.
     # Or return the distance currently believed to be the closest if its closer.
-    def get_distance_to_wall(self, state, wall, closest_distance):
+    def get_distance_to_wall(self, state, wall, closest_distance, cos_th, sin_th):
         # Ray-Segment Intersection
         # Ray: R(t) = [x + t*cos(theta), y + t*sin(theta)], t > 0
         # Wall: W(u) = [x1 + u*(x2-x1), y1 + u*(y2-y1)], 0 <= u <= 1
         
-        x, y, theta = state.x, state.y, state.theta
+        x, y = state.x, state.y
         x1, y1 = wall.corner1.x, wall.corner1.y
         x2, y2 = wall.corner2.x, wall.corner2.y
         
         dx = x2 - x1
         dy = y2 - y1
-        cos_th = math.cos(theta)
-        sin_th = math.sin(theta)
         
         # Denominator for intersection
         div = (sin_th * dx - cos_th * dy)
@@ -138,6 +143,17 @@ class Particle:
     def __init__(self):
         self.state = State(0, 0, 0)
         self.weight = 1.0
+        self.log_weight = 0.0
+
+    def copy(self):
+        new_p = Particle()
+        new_p.state = self.state.copy()
+        new_p.weight = self.weight
+        new_p.log_weight = self.log_weight
+        return new_p
+
+    def deepcopy(self):
+        return self.copy()
         
     # Function to create a new random particle state within a range
     def randomize_uniformly(self, xy_range):
@@ -174,21 +190,30 @@ class Particle:
         
         # Midpoint integration
         th_mid = last_state.theta + 0.5 * dth
-        self.state.x = last_state.x + ds * math.cos(th_mid + beta)
-        self.state.y = last_state.y + ds * math.sin(th_mid + beta)
+        new_x = last_state.x + ds * math.cos(th_mid + beta)
+        new_y = last_state.y + ds * math.sin(th_mid + beta)
+        
+        # NaN and Inf protection
+        if not math.isfinite(new_x) or not math.isfinite(new_y):
+            self.state.x = last_state.x
+            self.state.y = last_state.y
+        else:
+            # Map boundary lock: Prevent particles from flying into the void
+            # We allow a small buffer (0.5m) outside map bounds for recovery
+            self.state.x = max(-0.5, min(2.5, new_x))
+            self.state.y = max(-0.5, min(3.0, new_y))
+            
         self.state.theta = angle_wrap(last_state.theta + dth)
         
     # Function to determine a particles log-weight based how well the lidar measurement matches up with the map.
     def calculate_log_weight(self, lidar_signal, map_obj):
-        # We use a log-likelihood sum to completely avoid underflow.
-        # We also subsample the rays (e.g. use ~30 rays) to speed up math and prevent overconfidence.
         self.log_weight = 0.0
         # The sensor static noise is parameters.distance_variance (e.g. 5.62e-6 m^2)
-        # We add 0.05 m^2 for environmental model/map uncertainty so the uniform cloud can mathematically converge.
-        variance = parameters.distance_variance + 0.05 
+        # We add 0.005 m^2 for environmental model/map uncertainty.
+        variance = parameters.distance_variance + 0.005 
         valid_rays = 0
         
-        step = max(1, len(lidar_signal.angles) // 30) # Subsample to ~30 evenly spaced rays
+        step = max(1, len(lidar_signal.angles) // 45) # Use 45 rays for performance balance
         for i in range(0, len(lidar_signal.angles), step):
             actual_dist = lidar_signal.convert_hardware_distance(lidar_signal.distances[i])
             
@@ -198,10 +223,15 @@ class Particle:
                 
             # convert_hardware_angle handles the LIDAR-to-robot transform
             angle = lidar_signal.convert_hardware_angle(lidar_signal.angles[i])
+            ray_theta = angle_wrap(self.state.theta + angle)
             
-            # Particle pose in map
-            ray_state = State(self.state.x, self.state.y, angle_wrap(self.state.theta + angle))
-            expected_dist = map_obj.closest_distance_to_walls(ray_state)
+            # OPTIMIZED: Pre-calculate trig for all walls in this ray
+            cos_th = math.cos(ray_theta)
+            sin_th = math.sin(ray_theta)
+            
+            expected_dist = 999999
+            for wall in map_obj.wall_list:
+                expected_dist = map_obj.get_distance_to_wall(self.state, wall, expected_dist, cos_th, sin_th)
             
             # Cap expected distance to sensor max range, just in case of ray escapes the map
             if expected_dist > 8.0:
@@ -213,7 +243,6 @@ class Particle:
             
         if valid_rays > 0:
             # Average the log weight so that adding more rays doesn't disproportionately sharpen the distribution
-            # This allows symmetric multi-modal clusters to form and survive accurately without instant collapse
             self.log_weight /= valid_rays
         else:
             self.log_weight = -1e9 # Penalize completely invalid particles
@@ -321,6 +350,7 @@ class ParticleFilter:
         self.state_estimate_list = []
         self.last_time = 0
         self.last_encoder_counts = encoder_counts_0
+        self.last_kidnap_print = 0.0 # For print throttling
 
     # Update the states given new measurements
     def update(self, odometery_signal, measurement_signal, delta_t):
@@ -333,7 +363,20 @@ class ParticleFilter:
     # Predict the current state from the last state.
     def prediction(self, odometry_signal, delta_t):
         # odometry_signal: [encoder_counts, steering_angle]
+        if self.last_encoder_counts is None:
+            self.last_encoder_counts = odometry_signal[0]
+            
         delta_encoder = odometry_signal[0] - self.last_encoder_counts
+        
+        # HARDWARE JUMP PROTECTION
+        # If the jump is physically impossible (> 1.0m per 0.1s), 
+        # assume it's a connection glitch and discard the delta.
+        dist_jump = abs(delta_encoder * parameters.K_SE)
+        if dist_jump > 1.0:
+            print(f"JUMP REJECTED: {delta_encoder} ticks (~{dist_jump:.2f}m). Baselining encoder.")
+            self.last_encoder_counts = odometry_signal[0]
+            return
+            
         steering = odometry_signal[1]
         
         for p in self.particle_set.particle_list:
@@ -341,15 +384,41 @@ class ParticleFilter:
             
         self.last_encoder_counts = odometry_signal[0]
         
+        if self.particle_set.num_particles > 0:
+            p0 = self.particle_set.particle_list[0].state
+            if abs(p0.x) > 10 or abs(p0.y) > 10:
+                 print(f"WARNING: Particles near edge: P0 at ({p0.x:.2f}, {p0.y:.2f})")
+        
     # Corrrect the predicted states.
     def correction(self, measurement_signal):
         # Calculate log weights for all particles
         for p in self.particle_set.particle_list:
             p.calculate_log_weight(measurement_signal, self.map)
             
-        # Log-Sum-Exp Trick to avoid underflow
-        # Find the max log_weight
-        max_log_weight = max([p.log_weight for p in self.particle_set.particle_list])
+        # Debugging: check if log weights are all identical/invalid
+        log_weights = [p.log_weight for p in self.particle_set.particle_list]
+        max_log_weight = max(log_weights)
+        
+        # KIDNAPPED ROBOT DETECTION
+        # If the best particle still has a terrible fit (e.g. log_weight < -4.0),
+        # it means we are likely lost. Reset to uniform distribution.
+        KIDNAPPED_THRESHOLD = -6.0
+        if max_log_weight < KIDNAPPED_THRESHOLD:
+            # Throttle kidnapping logs to avoid flooding and performance degredation
+            now = time.time()
+            if not hasattr(self, 'last_kidnap_print') or now - self.last_kidnap_print > 1.0:
+                print(f"[KIDNAPPED] Best weight {max_log_weight:.2f} < {KIDNAPPED_THRESHOLD}. Re-localizing...")
+                self.last_kidnap_print = now
+                
+            self.particle_set.generate_uniform_random_particles(self.map.particle_range)
+            # Reset weights for new uniform set
+            for p in self.particle_set.particle_list:
+                p.weight = 1.0 / self.particle_set.num_particles
+            return
+
+        min_log = min(log_weights)
+        if max_log_weight == min_log:
+             print(f"DEBUG: All particles have same weight: {max_log_weight}")
         
         # Convert log weights to regular weights strictly relative to the maximum
         max_weight = 0.0

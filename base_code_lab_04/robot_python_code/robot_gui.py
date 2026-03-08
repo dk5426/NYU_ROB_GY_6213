@@ -9,7 +9,6 @@ from nicegui import ui, app, run
 import numpy as np
 import time
 from fastapi import Response
-from time import time
 
 # Local libraries
 from robot import Robot
@@ -160,14 +159,22 @@ def main():
             plt.tick_params(axis='x', colors='lightgray')
             plt.tick_params(axis='y', colors='lightgray')
                 
+            # Batch plot all LIDAR rays for performance
+            batch_x = []
+            batch_y = []
             for i in range(num_angles):
                 distance = lidar_distance_list[i]
                 cos_ang = lidar_cos_angle_list[i]
                 sin_ang = lidar_sin_angle_list[i]
-                x = [distance * cos_ang, max_lidar_range * cos_ang]
-                y = [distance * sin_ang, max_lidar_range * sin_ang]
-                plt.plot(x, y, 'r')
-            plt.grid(True)
+                # Ray from center to reading
+                batch_x.extend([0, distance * cos_ang, None])
+                batch_y.extend([0, distance * sin_ang, None])
+                # Max range indicator
+                batch_x.extend([distance * cos_ang, max_lidar_range * cos_ang, None])
+                batch_y.extend([distance * sin_ang, max_lidar_range * sin_ang, None])
+                
+            plt.plot(batch_x, batch_y, 'r', linewidth=0.5, alpha=0.5)
+            plt.grid(True, alpha=0.3)
             plt.xlim(-2,2)
             plt.ylim(-2,2)
 
@@ -189,6 +196,13 @@ def main():
             # Plot Particles
             px = [p.state.x for p in robot.particle_filter.particle_set.particle_list]
             py = [p.state.y for p in robot.particle_filter.particle_set.particle_list]
+            
+            # Subtle GUI Heartbeat:
+            if len(px) == 0:
+                print("GUI DRAW ERROR: NO PARTICLES!")
+            elif time.perf_counter() % 5 < 0.1: # Every ~5 seconds
+                print(f"DEBUG: Rendering {len(px)} particles. Mean X={robot.particle_filter.particle_set.mean_state.x:.2f}")
+                
             plt.scatter(px, py, c='lime', s=10, alpha=0.8)
             
             # Plot Mean Estimate
@@ -258,18 +272,25 @@ def main():
 
     # Update slider values, plots, etc. and run robot control loop
     async def control_loop():
-        update_connection_to_robot()
-        cmd_speed, cmd_steering_angle = update_commands()
-        robot.control_loop(cmd_speed, cmd_steering_angle, logging_switch.value)
+        try:
+            cmd_speed, cmd_steering_angle = update_commands()
+            robot.control_loop(cmd_speed, cmd_steering_angle, logging_switch.value)
+            update_connection_to_robot()
+            show_localization_plot()
+            show_lidar_plot()
+        except Exception as e:
+            import traceback
+            print(f"Error in control loop: {e}")
+            traceback.print_exc()
+            
         encoder_count_label.set_text(robot.robot_sensor_signal.encoder_counts)
         update_lidar_data()
         
         try:
-            show_lidar_plot()
             show_localization_plot()
         except Exception as e:
             import traceback
-            print(f"Error in plotting: {e}")
+            print(f"Error in update plots: {e}")
             traceback.print_exc()
         #update_video(video_image)
         

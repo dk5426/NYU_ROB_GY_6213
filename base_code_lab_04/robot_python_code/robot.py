@@ -29,12 +29,13 @@ class Robot:
         self.robot_sensor_signal = robot_python_code.RobotSensorSignal([0, 0, 0])
         self.camera_sensor_signal = [0,0,0,0,0,0]
         map = particle_filter.Map(parameters.wall_corner_list)
-        self.particle_filter = particle_filter.ParticleFilter(num_particles=parameters.num_particles, map=map, initial_state=particle_filter.State(0,0,0), state_stdev=particle_filter.State(1,1,1), known_start_state=False, encoder_counts_0=0)
+        self.particle_filter = particle_filter.ParticleFilter(num_particles=parameters.num_particles, map=map, initial_state=particle_filter.State(0,0,0), state_stdev=particle_filter.State(1,1,1), known_start_state=False, encoder_counts_0=None)
         
     # Create udp senders and receiver instances with the udp communication
     def setup_udp_connection(self, udp_communication):
         self.msg_sender = robot_python_code.MsgSender(time.perf_counter(), parameters.num_robot_control_signals, udp_communication)
         self.msg_receiver = robot_python_code.MsgReceiver(time.perf_counter(), parameters.num_robot_sensors, udp_communication)
+        self.particle_filter.last_encoder_counts = None # Reset baseline for real hardware
         print("Reset msg_senders and receivers!")
 
     # Stop udp senders and receiver instances with the udp communication
