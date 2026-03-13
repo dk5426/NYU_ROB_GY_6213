@@ -51,17 +51,7 @@ def main():
     # Robot variables
     robot = Robot()
 
-    # Lidar data
-    max_lidar_range = 12
-    lidar_angle_res = 2
-    num_angles = int(360 / lidar_angle_res)
-    lidar_distance_list = []
-    lidar_cos_angle_list = []
-    lidar_sin_angle_list = []
-    for i in range(num_angles):
-        lidar_distance_list.append(max_lidar_range)
-        lidar_cos_angle_list.append(math.cos(i*lidar_angle_res/180*math.pi))
-        lidar_sin_angle_list.append(math.sin(i*lidar_angle_res/180*math.pi))
+    # Set dark mode for gui
     # Set dark mode for gui
     dark = ui.dark_mode()
     dark.value = True
@@ -84,14 +74,7 @@ def main():
         jpeg = await run.cpu_bound(convert, frame)
         return Response(content=jpeg, media_type='image/jpeg')
 
-    # Convert lidar data to something visible in correct units. This is dummy data for lab 1.
-    def update_lidar_data():
-        for i in range(robot.robot_sensor_signal.num_lidar_rays):
-            distance_in_mm = robot.robot_sensor_signal.distances[i]
-            angle = 360-robot.robot_sensor_signal.angles[i]
-            if distance_in_mm > 20 and abs(angle) < 360:
-                index = max(0,min(int(360/lidar_angle_res-1),int((angle-(lidar_angle_res/2))/lidar_angle_res)))
-                lidar_distance_list[index] = distance_in_mm/1000
+
                
     # Determine what speed and steering commands to send
     def update_commands():
@@ -149,34 +132,7 @@ def main():
     def enable_steering():
         d = 0
 
-    # Visualize the lidar scans
-    def show_lidar_plot():
-        with main_plot:
-            fig = main_plot.fig
-            fig.patch.set_facecolor('black')
-            plt.clf()
-            plt.style.use('dark_background')
-            plt.tick_params(axis='x', colors='lightgray')
-            plt.tick_params(axis='y', colors='lightgray')
-                
-            # Batch plot all LIDAR rays for performance
-            batch_x = []
-            batch_y = []
-            for i in range(num_angles):
-                distance = lidar_distance_list[i]
-                cos_ang = lidar_cos_angle_list[i]
-                sin_ang = lidar_sin_angle_list[i]
-                # Ray from center to reading
-                batch_x.extend([0, distance * cos_ang, None])
-                batch_y.extend([0, distance * sin_ang, None])
-                # Max range indicator
-                batch_x.extend([distance * cos_ang, max_lidar_range * cos_ang, None])
-                batch_y.extend([distance * sin_ang, max_lidar_range * sin_ang, None])
-                
-            plt.plot(batch_x, batch_y, 'r', linewidth=0.5, alpha=0.5)
-            plt.grid(True, alpha=0.3)
-            plt.xlim(-2,2)
-            plt.ylim(-2,2)
+
 
     # Visualize localization predictions and particles
     def show_localization_plot():
@@ -229,15 +185,12 @@ def main():
     with ui.card().classes('w-full  items-center'):
         ui.label('ROB-GY - 6213: Robot Navigation & Localization').style('font-size: 24px;')
     
-    # Create the video camera, lidar, and encoder sensor visualizations.
+    # Create the video camera and encoder sensor visualizations.
     with ui.card().classes('w-full'):
-        with ui.grid(columns=3).classes('w-full items-center'):
+        with ui.grid(columns=2).classes('w-full items-center'):
             with ui.card().classes('w-full items-center h-60'):
                 ui.label('Particle Filter Map').style('text-align: center; color: white;')
-                pf_plot = ui.pyplot(figsize=(3, 3))
-            with ui.card().classes('w-full items-center h-60'):
-                ui.label('Lidar Scan').style('text-align: center; color: white;')
-                main_plot = ui.pyplot(figsize=(3, 3))
+                pf_plot = ui.pyplot(figsize=(4, 4))
             with ui.card().classes('items-center h-60'):
                 ui.label('Encoder:').style('text-align: center;')
                 encoder_count_label = ui.label('0')
@@ -277,14 +230,12 @@ def main():
             robot.control_loop(cmd_speed, cmd_steering_angle, logging_switch.value)
             update_connection_to_robot()
             show_localization_plot()
-            show_lidar_plot()
         except Exception as e:
             import traceback
             print(f"Error in control loop: {e}")
             traceback.print_exc()
             
         encoder_count_label.set_text(robot.robot_sensor_signal.encoder_counts)
-        update_lidar_data()
         
         try:
             show_localization_plot()

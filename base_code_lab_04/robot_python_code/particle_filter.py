@@ -174,7 +174,6 @@ class Particle:
         
     # Function to take a particle and "randomly" propagate it forward according to a motion model.
     def propagate_state(self, last_state, delta_encoder_counts, steering, delta_t):
-        # Full Fancy Slip-Bias Motion Model
         ds_mean = parameters.K_SE * delta_encoder_counts
         ds_std = math.sqrt(parameters.K_SS * abs(delta_encoder_counts))
         ds = random.gauss(ds_mean, ds_std)
@@ -198,8 +197,6 @@ class Particle:
             self.state.x = last_state.x
             self.state.y = last_state.y
         else:
-            # Map boundary lock: Prevent particles from flying into the void
-            # We allow a small buffer (0.5m) outside map bounds for recovery
             self.state.x = max(-0.5, min(2.5, new_x))
             self.state.y = max(-0.5, min(3.0, new_y))
             
@@ -208,12 +205,10 @@ class Particle:
     # Function to determine a particles log-weight based how well the lidar measurement matches up with the map.
     def calculate_log_weight(self, lidar_signal, map_obj):
         self.log_weight = 0.0
-        # The sensor static noise is parameters.distance_variance (e.g. 5.62e-6 m^2)
-        # We add 0.005 m^2 for environmental model/map uncertainty.
         variance = parameters.distance_variance + 0.005 
         valid_rays = 0
         
-        step = max(1, len(lidar_signal.angles) // 45) # Use 45 rays for performance balance
+        step = max(1, len(lidar_signal.angles) // 45)
         for i in range(0, len(lidar_signal.angles), step):
             actual_dist = lidar_signal.convert_hardware_distance(lidar_signal.distances[i])
             
@@ -402,11 +397,10 @@ class ParticleFilter:
         max_log_weight = max(log_weights)
         
         # KIDNAPPED ROBOT DETECTION
-        # If the best particle still has a terrible fit (e.g. log_weight < -4.0),
+        # If the best particle still has a terrible fit 
         # it means we are likely lost. Reset to uniform distribution.
         KIDNAPPED_THRESHOLD = -6.0
         if max_log_weight < KIDNAPPED_THRESHOLD:
-            # Throttle kidnapping logs to avoid flooding and performance degredation
             now = time.time()
             if not hasattr(self, 'last_kidnap_print') or now - self.last_kidnap_print > 1.0:
                 print(f"[KIDNAPPED] Best weight {max_log_weight:.2f} < {KIDNAPPED_THRESHOLD}. Re-localizing...")
